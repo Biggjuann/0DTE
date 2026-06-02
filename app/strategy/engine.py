@@ -53,6 +53,7 @@ class TickerState:
     prev_status: Optional[MMStatus] = None
     saw_long_in_trade: bool = False
     can_enter: bool = True       # re-arm latch: one entry per put-wall touch
+    quote_error: Optional[str] = None
     last_event: str = "waiting for data"
     events: List[str] = field(default_factory=list)
     updated: float = field(default_factory=time.time)
@@ -131,6 +132,10 @@ class Engine:
                     q = self.providers.market.get_quote(ticker)
                     if q:
                         st.quote = q
+                        st.quote_error = None
+                    else:
+                        st.quote_error = (getattr(self.providers.market, "last_error", None)
+                                          or "quote feed returned nothing")
                     self._last_quote[ticker] = now
                 self._evaluate(st)
                 st.updated = now
@@ -331,6 +336,7 @@ class Engine:
                     "mm": to_jsonable(st.mm) if st.mm else None,
                     "bull_control": st.mm.bull_control if st.mm else None,
                     "quote": to_jsonable(st.quote) if st.quote else None,
+                    "quote_error": st.quote_error,
                     "position": to_jsonable(st.position) if st.position else None,
                     "pnl": st.position.pnl if st.position else None,
                     "pnl_pct": st.position.pnl_pct if st.position else None,

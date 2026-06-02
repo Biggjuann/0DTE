@@ -34,7 +34,9 @@ def build_providers() -> Providers:
 
         mm = MMProviderLive()
         token = SharedTokenProvider()                  # shared Schwab token
-        schwab = SchwabClient(token_fn=token.get_token)  # broker (orders) + data
+        # invalidate_fn lets the client force a token refresh on a 401 (the
+        # shared token rotates ~every 30 min under us).
+        schwab = SchwabClient(token_fn=token.get_token, invalidate_fn=token.invalidate)
         gamma_md = None
         if "gammagamma" in (settings.market_data_provider, settings.options_provider):
             gamma_md = GammaMarketData()

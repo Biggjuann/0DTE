@@ -202,7 +202,9 @@ function freshness(t){
   if(!t.quote||window.SRV==null) return '';
   const age=window.SRV-t.quote.asof;
   const stale=age>20;
-  return `<span class="fresh ${stale?'stale':''}">${age<2?'live':Math.round(age)+'s ago'}</span>`;
+  const err=stale&&t.quote_error?` title="${t.quote_error}"`:'';
+  return `<span class="fresh ${stale?'stale':''}"${err}>${age<2?'live':Math.round(age)+'s ago'}</span>`
+    +(stale&&t.quote_error?`<span class="muted" style="font-size:10px;margin-left:6px">feed: ${t.quote_error}</span>`:'');
 }
 
 function flow(mm){

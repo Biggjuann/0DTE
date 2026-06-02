@@ -99,6 +99,10 @@ class CompositeMarketData:
         self.quote_src = quote_src
         self.option_src = option_src
 
+    @property
+    def last_error(self):
+        return getattr(self.quote_src, "last_error", None)
+
     def get_quote(self, ticker: str):
         return self.quote_src.get_quote(ticker)
 

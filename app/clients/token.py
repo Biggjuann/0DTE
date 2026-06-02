@@ -34,6 +34,13 @@ class SharedTokenProvider:
         self._token: Optional[str] = None
         self._exp: float = 0.0
 
+    def invalidate(self) -> None:
+        """Drop the cached token so the next get_token() re-fetches.
+
+        Called when Schwab returns 401 (the shared token rotated under us)."""
+        self._token = None
+        self._exp = 0.0
+
     def get_token(self) -> Optional[str]:
         if self.mode != "shared":
             log.error("SCHWAB_AUTH_MODE=%s unsupported (only 'shared' implemented)", self.mode)
