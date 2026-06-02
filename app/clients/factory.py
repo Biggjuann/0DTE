@@ -43,6 +43,10 @@ def build_providers() -> Providers:
         option_src = gamma_md if settings.options_provider == "gammagamma" else schwab
         market = quote_src if quote_src is option_src else CompositeMarketData(quote_src, option_src)
 
+        if settings.market_data_provider != "gammagamma" and not settings.token_share_key:
+            log.warning("MARKET_DATA_PROVIDER=schwab but SCHWAB_TOKEN_SHARE_KEY is unset — "
+                        "Schwab spot quotes will fail and the price will look frozen.")
+
         log.info("Providers: LIVE (levels=Gammagamma, mm=MM, quotes=%s, options=%s, "
                  "orders=Schwab[%s], dry_run=%s)",
                  settings.market_data_provider, settings.options_provider,
