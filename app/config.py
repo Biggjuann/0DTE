@@ -63,12 +63,33 @@ class Settings:
     schwab_base_url: str = field(default_factory=lambda: os.getenv("SCHWAB_BASE_URL", "https://api.schwabapi.com"))
     schwab_account_hash: str = field(default_factory=lambda: os.getenv("SCHWAB_ACCOUNT_HASH", ""))
 
+    # Shared-token mechanism (matches the MM service's variables).
+    # SCHWAB_AUTH_MODE: "shared" pulls the access token from SCHWAB_TOKEN_URL
+    # using SCHWAB_TOKEN_SHARE_KEY as the bearer.
+    schwab_auth_mode: str = field(default_factory=lambda: os.getenv("SCHWAB_AUTH_MODE", "shared").lower())
+    schwab_token_url: str = field(default_factory=lambda: os.getenv("SCHWAB_TOKEN_URL", ""))
+    schwab_token_share_key: str = field(default_factory=lambda: os.getenv("SCHWAB_TOKEN_SHARE_KEY", ""))
+    # Which backend supplies underlying quotes / option chains: "schwab" or
+    # "gammagamma". Orders always route through Schwab regardless.
+    market_data_provider: str = field(default_factory=lambda: os.getenv("MARKET_DATA_PROVIDER", "schwab").lower())
+    options_provider: str = field(default_factory=lambda: os.getenv("OPTIONS_PROVIDER", "schwab").lower())
+
     host: str = field(default_factory=lambda: os.getenv("HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: _int("PORT", 8080))
 
     @property
     def live(self) -> bool:
         return self.data_mode == "live"
+
+    @property
+    def token_url(self) -> str:
+        """Resolved Schwab token endpoint (defaults to MM's /auth/token)."""
+        return self.schwab_token_url or f"{self.mm_base_url.rstrip('/')}/auth/token"
+
+    @property
+    def token_share_key(self) -> str:
+        """Bearer key for the shared token (SCHWAB_TOKEN_SHARE_KEY, MM_API_KEY fallback)."""
+        return self.schwab_token_share_key or self.mm_api_key
 
 
 settings = Settings()

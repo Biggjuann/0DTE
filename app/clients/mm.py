@@ -52,8 +52,7 @@ class MMProviderLive:
         self.base = (base_url or settings.mm_base_url).rstrip("/")
         self.api_key = api_key or settings.mm_api_key
         self.client = httpx.Client(timeout=timeout)
-        self._token: Optional[str] = None
-        self._token_exp: float = 0.0
+        self._token_provider = None  # lazy SharedTokenProvider
 
     # --- trend + flow --------------------------------------------------------
     def get_signal(self, ticker: str) -> Optional[MMSignal]:
@@ -93,26 +92,8 @@ class MMProviderLive:
 
     # --- shared Schwab token -------------------------------------------------
     def get_schwab_token(self) -> Optional[str]:
-        if self._token and time.time() < self._token_exp:
-            return self._token
-        if not self.api_key:
-            log.error("MM: MM_API_KEY (Schwab share key) not set — cannot fetch token")
-            return None
-        try:
-            r = self.client.get(
-                f"{self.base}/auth/token",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            )
-            if r.status_code != 200:
-                log.error("MM /auth/token -> %s", r.status_code)
-                return None
-            j = r.json()
-            tok = j.get("access_token") or j.get("token") or j.get("accessToken")
-            if tok:
-                self._token = tok
-                ttl = float(j.get("expires_in", 600))
-                self._token_exp = time.time() + max(30.0, ttl - 30.0)
-                return tok
-        except Exception as exc:  # pragma: no cover - network
-            log.error("MM /auth/token failed: %s", exc)
-        return None
+        """Delegates to the shared-token provider (SCHWAB_TOKEN_URL/SHARE_KEY)."""
+        if self._token_provider is None:
+            from app.clients.token import SharedTokenProvider
+            self._token_provider = SharedTokenProvider()
+        return self._token_provider.get_token()

@@ -98,13 +98,23 @@ python tests/test_strategy.py
 cp .env.example .env
 # set in .env:
 DATA_MODE=live
-DRY_RUN=true                 # keep true until verified end-to-end
-MM_API_KEY=<schwab share key>   # MM /auth/token bearer
-SCHWAB_ACCOUNT_HASH=<hash>      # required only when DRY_RUN=false
+DRY_RUN=true                          # keep true until verified end-to-end
+SCHWAB_AUTH_MODE=shared               # share MM's single Schwab token
+SCHWAB_TOKEN_URL=.../auth/token       # defaults to MM_BASE_URL + /auth/token
+SCHWAB_TOKEN_SHARE_KEY=<share key>    # bearer for the token endpoint
+SCHWAB_ACCOUNT_HASH=<hash>            # required only when DRY_RUN=false
+MARKET_DATA_PROVIDER=schwab           # or "gammagamma"
+OPTIONS_PROVIDER=schwab               # or "gammagamma"
 ```
 
-GAMMA/MM base URLs already default to the Railway services. With `DRY_RUN=true`,
-orders are simulated against live quotes and **never transmitted**.
+**Shared token:** with `SCHWAB_AUTH_MODE=shared`, the app fetches the access
+token from `SCHWAB_TOKEN_URL` using `SCHWAB_TOKEN_SHARE_KEY` as the bearer — the
+same shared Schwab authorization MM uses — for both market data and order
+routing. `MARKET_DATA_PROVIDER` / `OPTIONS_PROVIDER` select whether quotes and
+option chains come from Schwab or Gammagamma (orders always route through
+Schwab; Gammagamma contracts are converted to Schwab OSI symbols). GAMMA/MM
+base URLs already default to the Railway services. With `DRY_RUN=true`, orders
+are simulated against live quotes and **never transmitted**.
 
 ## Deploy to Railway
 
