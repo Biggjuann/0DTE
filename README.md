@@ -35,10 +35,13 @@ A "buy the dip at structural support, ride to resistance" long-call strategy.
    → **BUY_TO_OPEN** a 0DTE **call** struck **$1 above the Mid** level
    (`STRIKE_OFFSET`, default 1.0; QQQ 738.18 → strike 739).
 
-**Exit** (`OPEN → flat`):
-- **Mid take-profit** — stance downgrades to **cautious-long** *and* price within $1 of **Mid**.
-- **Top take-profit** — stance **stays long** and price within $1 of **Top** (largest call wall).
+**Exit** (`OPEN → flat`, in priority order):
 - **Protective** — stance loses long approval entirely (neutral/short) → flatten.
+- **Stop** — 1-minute **close below the Lower level** → flatten.
+- **Mid take-profit** — stance downgrades to **cautious-long** and price reaches the **Mid** zone (≥ mid − $1).
+- **Top take-profit** — stance **stays long** and price reaches the **Top** zone (≥ top − $1, i.e. when the top call-wall label starts flashing).
+
+Take-profits use a *reached-or-beyond* band so a fast 0DTE move that overshoots a level between quote polls still closes the trade.
 
 The `$1` band, contract count, tickers and poll cadences are all configurable.
 

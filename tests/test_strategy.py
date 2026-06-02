@@ -58,6 +58,11 @@ def make_engine(p):
     settings.mm_poll_seconds = 0
     settings.quote_poll_seconds = 0
     eng = Engine(providers=Providers(levels=p, mm=p, market=p, broker=p, mode="test"))
+    # Isolate the trade log to a throwaway temp file so tests never touch the
+    # app's real data/trades.json.
+    import tempfile
+    from app.store import TradeLog
+    eng.trades = TradeLog(path=tempfile.mktemp(suffix=".json"))
     return eng
 
 
@@ -118,6 +123,29 @@ def test_hold_to_top_while_long():
     eng._tick()
     assert st(eng).position is None
     assert any(o[0] == "SELL" for o in p.orders)
+
+
+def test_stop_when_close_below_lower():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0  # near lower
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    # 1-min close drops below the lower level (525) while still long -> STOP
+    p.price = 524.0
+    eng._tick()
+    assert st(eng).position is None
+    assert any(o[0] == "SELL" for o in p.orders)
+    assert "STOP" in st(eng).last_event
+
+
+def test_top_exit_fires_when_in_top_zone():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    # price reaches the top zone (within $1 of top 540) while long -> exit at top
+    p.price = 539.2
+    eng._tick()
+    assert st(eng).position is None
+    assert "top" in st(eng).last_event.lower()
 
 
 def test_protective_exit_on_bearish():

@@ -48,12 +48,15 @@ class MockProvider:
     def _price(self, ticker: str) -> float:
         a = _anchor(ticker)
         p = self._phase(ticker)
-        # 0..0.5 climb lower->top, 0.5..1 drift back down.
+        # Sweep floor sits just inside the entry band ($0.5 above the lower
+        # level) so the trigger fires cleanly without the jitter tripping the
+        # "close below lower" stop. 0..0.5 climb floor->top, 0.5..1 back down.
+        floor = a["lower"] + 0.5
         if p < 0.5:
-            base = a["lower"] + (a["top"] - a["lower"]) * (p / 0.5)
+            base = floor + (a["top"] - floor) * (p / 0.5)
         else:
-            base = a["top"] - (a["top"] - a["lower"]) * ((p - 0.5) / 0.5)
-        jitter = math.sin(time.time() / 3.0 + len(ticker)) * 0.25
+            base = a["top"] - (a["top"] - floor) * ((p - 0.5) / 0.5)
+        jitter = math.sin(time.time() / 3.0 + len(ticker)) * 0.2
         return round(base + jitter, 2)
 
     # --- LevelsProvider ------------------------------------------------------
@@ -79,15 +82,18 @@ class MockProvider:
         price = self._price(ticker)
         span = a["top"] - a["lower"]
         progress = (price - a["lower"]) / span if span else 0.0
-        # LONG while climbing through the lower half; downgrade to CAUTIOUS_LONG
-        # once price is at/above the mid (so the mid-exit can trigger).
-        status = MMStatus.LONG if price < a["mid"] else MMStatus.CAUTIOUS_LONG
+        # Stay LONG for the whole CLIMB (lower -> top) so an open position rides
+        # all the way to the TOP call wall and exits there (the primary path).
+        # Downgrade to CAUTIOUS_LONG on the way back DOWN; entries are still
+        # approved at the bottom, then flip to LONG again on the next climb.
+        climbing = self._phase(ticker) < 0.5
+        status = MMStatus.LONG if climbing else MMStatus.CAUTIOUS_LONG
         puts_below = 1_400_000 * (1.1 - progress)
         calls_above = 900_000 * (0.9 + progress)
         reason = (
-            "BULLS in control — puts below spot dominate calls at/above spot."
+            "BULLS in control — puts below spot dominate calls ≥ spot. Ride it."
             if status is MMStatus.LONG
-            else "Momentum cooling — calls hedging picking up near the mid."
+            else "Momentum cooling on the pullback — cautious long."
         )
         return MMSignal(
             ticker=ticker,

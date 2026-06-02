@@ -206,7 +206,7 @@ function position(t){
     <div class="row"><span>Strike / Qty</span><span class="mono">${fmt(p.strike)} × ${p.qty}</span></div>
     <div class="row"><span>Entry → Now</span><span class="mono">${fmt(p.entry_price)} → ${fmt(p.current_price)}</span></div>
     <div class="row"><span>P&amp;L</span><span class="mono ${cls}">${money(t.pnl)} (${fmt(t.pnl_pct,1)}%)</span></div>
-    ${lv?`<div class="targets">Exit: mid <b>${fmt(lv.mid)}</b> if downgraded · top <b>${fmt(lv.top)}</b> if stays long</div>`:''}
+    ${lv?`<div class="targets">Exit: top <b>${fmt(lv.top)}</b> (long·flashing) · mid <b>${fmt(lv.mid)}</b> (downgrade) · stop&lt; <b>${fmt(lv.lower)}</b></div>`:''}
   </div>`;
 }
 

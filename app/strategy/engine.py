@@ -16,13 +16,14 @@ Entry  (FLAT/ARMED -> OPEN)
         -> BUY_TO_OPEN 0DTE call, strike = nearest to (MID + STRIKE_OFFSET),
            i.e. $1 above the mid level by default.
 
-Exit  (OPEN -> flat)
-    a) status downgrades to CAUTIOUS_LONG (from LONG) and |price - mid| <= $1
-         -> take profit at the MID level.
-    b) status stays LONG and |price - top| <= $1
-         -> take profit at the TOP level (largest call wall).
-    c) status loses long approval entirely (neutral/short)
-         -> protective exit.
+Exit  (OPEN -> flat), checked in priority order
+    a) status loses long approval entirely (neutral/short) -> protective exit.
+    b) 1-minute CLOSE below the LOWER level                -> STOP.
+    c) status is CAUTIOUS_LONG and price >= mid - $1        -> take profit at MID.
+    d) status stays LONG and price >= top - $1 (top wall    -> take profit at TOP.
+       label "flashing")
+Take-profits use a reached-or-beyond band so a fast 0DTE move that overshoots
+the level between quote polls still closes the trade.
 """
 from __future__ import annotations
 
@@ -181,15 +182,22 @@ class Engine:
             if mm.status is MMStatus.LONG:
                 st.saw_long_in_trade = True
 
+            prox = settings.proximity
             reason = None
             if not approved:
                 reason = f"MM status '{mm.status.value}' lost long approval — protective exit"
-            elif mm.status is MMStatus.CAUTIOUS_LONG and self._near(price, lv.mid):
-                reason = (f"Downgraded to cautious-long within ${settings.proximity:g} of "
-                          f"MID {lv.mid:.2f} — take profit at mid")
-            elif mm.status is MMStatus.LONG and self._near(price, lv.top):
-                reason = (f"Held LONG to within ${settings.proximity:g} of TOP "
-                          f"{lv.top:.2f} — take profit at top")
+            elif price_close < lv.lower:
+                # Stop: 1-minute close below the lower (put-wall) level.
+                reason = (f"STOP — 1-min close {price_close:.2f} below LOWER {lv.lower:.2f}")
+            elif mm.status is MMStatus.CAUTIOUS_LONG and price >= lv.mid - prox:
+                # Take profit at mid on a long->cautious downgrade (reached the
+                # mid zone or beyond; robust to overshoot between polls).
+                reason = (f"Downgraded to cautious-long at/above MID {lv.mid:.2f} "
+                          f"(within ${prox:g}) — take profit at mid")
+            elif mm.status is MMStatus.LONG and price >= lv.top - prox:
+                # Held LONG into the top (call-wall) zone -> take profit at top.
+                reason = (f"Held LONG into TOP {lv.top:.2f} (within ${prox:g}) "
+                          f"— take profit at top call wall")
 
             if reason:
                 self._exit(st, reason)
