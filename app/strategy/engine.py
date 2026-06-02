@@ -9,12 +9,12 @@ Per-ticker state machine
               on the 1-minute chart.
     OPEN      Holding a long 0DTE call struck at the MID level.
 
-Entry  (FLAT/ARMED -> OPEN)
-    status in {LONG, CAUTIOUS_LONG}                     (approval)
-    AND bull_control (puts below spot > calls >= spot)  (flow confirmation)
-    AND |minute_close - lower| <= PROXIMITY             (1-min trigger)
-        -> BUY_TO_OPEN 0DTE call, strike = nearest to (MID + STRIKE_OFFSET),
-           i.e. $1 above the mid level by default.
+Entry  (FLAT/ARMED -> OPEN) — the ONLY conditions for a long:
+    status in {LONG, CAUTIOUS_LONG}              (approval)
+    AND |live price - lower| <= PROXIMITY        (within $1 of the put wall)
+    plus guards: valid channel (lower<mid<top, $1 gaps), price below the mid
+    take-profit zone, and a one-entry-per-touch re-arm latch.
+        -> BUY_TO_OPEN 0DTE call, strike = nearest to (MID + STRIKE_OFFSET).
 
 Exit  (OPEN -> flat), checked in priority order
     a) status loses long approval entirely (neutral/short) -> protective exit.
@@ -52,6 +52,7 @@ class TickerState:
     position: Optional[Position] = None
     prev_status: Optional[MMStatus] = None
     saw_long_in_trade: bool = False
+    can_enter: bool = True       # re-arm latch: one entry per put-wall touch
     last_event: str = "waiting for data"
     events: List[str] = field(default_factory=list)
     updated: float = field(default_factory=time.time)
@@ -155,27 +156,52 @@ class Engine:
 
         mm, lv, q = st.mm, st.levels, st.quote
         approved = mm.status.approves_entry
-        price_close = q.minute_close
         price = q.last
+        prox = settings.proximity
+        # A tradeable channel needs the three levels to be properly ordered with
+        # at least $1 of separation; otherwise (e.g. put wall == gvwap at the
+        # open) entry and exit zones overlap and we must stand aside.
+        valid_channel = (lv.lower < lv.mid < lv.top
+                         and (lv.mid - lv.lower) >= prox
+                         and (lv.top - lv.mid) >= prox)
 
         if st.position is None:
+            # Re-arm latch: once price leaves the put-wall band (upward) we are
+            # allowed one entry on the next touch. This prevents re-entering the
+            # same touch over and over.
+            if price > lv.lower + prox:
+                st.can_enter = True
+
             if not approved:
-                if st.state != PositionState.DISABLED:
-                    st.log_event(f"MM status '{mm.status.value}' — trading disabled")
+                msg = f"MM status '{mm.status.value}' — no long approval"
+                if st.last_event != msg:
+                    st.log_event(msg)
+                st.state = PositionState.DISABLED
+            elif not valid_channel:
+                msg = (f"levels too tight/inverted (lower {lv.lower:.2f} / "
+                       f"mid {lv.mid:.2f} / top {lv.top:.2f}) — standing aside")
+                if st.last_event != msg:
+                    st.log_event(msg)
                 st.state = PositionState.DISABLED
             else:
-                confirm = mm.bull_control
-                trigger = self._near(price_close, lv.lower)
-                if trigger and confirm:
+                # THE entry rule: live price within $1 of the put wall (lower)
+                # AND stance is long or cautious-long. Plus room below the mid
+                # take-profit so we don't enter straight into an exit.
+                at_putwall = abs(price - lv.lower) <= prox
+                room_to_mid = price < lv.mid - prox
+                if at_putwall and room_to_mid and st.can_enter:
                     self._enter(st)
+                    st.can_enter = False
                 else:
                     if st.state != PositionState.ARMED:
                         why = []
-                        if not trigger:
-                            why.append(f"close {price_close:.2f} not within "
-                                       f"${settings.proximity:g} of lower {lv.lower:.2f}")
-                        if not confirm:
-                            why.append("flow not bull-control")
+                        if not at_putwall:
+                            why.append(f"price {price:.2f} not within ${prox:g} of "
+                                       f"put wall {lv.lower:.2f}")
+                        elif not room_to_mid:
+                            why.append(f"price {price:.2f} too close to mid {lv.mid:.2f}")
+                        elif not st.can_enter:
+                            why.append("awaiting price to leave & re-touch put wall")
                         st.log_event(f"ARMED ({mm.status.value}); waiting — {', '.join(why)}")
                     st.state = PositionState.ARMED
         else:
@@ -183,15 +209,14 @@ class Engine:
             if mm.status is MMStatus.LONG:
                 st.saw_long_in_trade = True
 
-            prox = settings.proximity
             reason = exit_type = None
             if not approved:
                 exit_type = "PROTECTIVE"
                 reason = f"MM status '{mm.status.value}' lost long approval — protective exit"
-            elif price_close < lv.lower:
-                # Stop: 1-minute close below the lower (put-wall) level.
+            elif price < lv.lower:
+                # Stop: price broke below the put-wall (lower) level.
                 exit_type = "STOP"
-                reason = (f"STOP — 1-min close {price_close:.2f} below LOWER {lv.lower:.2f}")
+                reason = (f"STOP — price {price:.2f} below put wall {lv.lower:.2f}")
             elif mm.status is MMStatus.CAUTIOUS_LONG and price >= lv.mid - prox:
                 # Take profit at mid on a long->cautious downgrade (reached the
                 # mid zone or beyond; robust to overshoot between polls).
@@ -255,7 +280,8 @@ class Engine:
                      f"(strike {contract.strike:g} = mid {lv.mid:.2f}+${settings.strike_offset:g}; "
                      f"trigger near lower {lv.lower:.2f})")
         self.trades.append(TradeRecord(
-            ts=time.time(), ticker=st.ticker, action="ENTRY", reason="lower-level trigger + bull control",
+            ts=time.time(), ticker=st.ticker, action="ENTRY",
+            reason=f"price within ${settings.proximity:g} of put wall + {mm.status.value}",
             underlying=st.quote.last, contract_symbol=contract.symbol, strike=contract.strike,
             qty=settings.contracts, price=fill.price, dry_run=settings.dry_run,
             stance=mm.status.value, bull_control=mm.bull_control,

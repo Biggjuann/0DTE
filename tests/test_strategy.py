@@ -83,20 +83,50 @@ def test_no_entry_until_near_lower():
     assert st(eng).position is None
 
 
-def test_entry_triggers_at_lower_with_bull_control():
-    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4  # within $1 of lower 525
+def test_entry_at_putwall_when_long():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4  # within $1 of put wall 525
     eng = make_engine(p); eng._tick()
     assert st(eng).state is PositionState.OPEN
     assert st(eng).position.strike == 533.0  # strike == mid (532) + $1 offset
     assert ("BUY", "QQQ_C533", 1) in p.orders
 
 
-def test_no_entry_without_bull_control():
-    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
-    p.puts_below = 100; p.calls_above = 900_000  # flow not confirming
+def test_entry_at_putwall_when_cautious_long():
+    p = ScriptProvider(); p.status = MMStatus.CAUTIOUS_LONG; p.price = 525.2
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN  # cautious-long also approves
+
+
+def test_no_entry_when_price_above_putwall_band():
+    # The exact bug: live price well above the put wall must NOT enter.
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 528.0  # >$1 from 525
     eng = make_engine(p); eng._tick()
     assert st(eng).state is PositionState.ARMED
     assert st(eng).position is None
+
+
+def test_no_entry_on_degenerate_channel():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    p.levels.mid = 525.04; p.levels.top = 525.5  # put wall ~ gvwap, no real channel
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.DISABLED
+    assert st(eng).position is None
+
+
+def test_no_reentry_churn_same_touch():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    # Force a flat state without leaving the put-wall band, then re-tick.
+    eng._exit(st(eng), "test flatten", "TEST")
+    n = len([o for o in p.orders if o[0] == "BUY"])
+    p.price = 525.5  # still within the band, never left
+    eng._tick(); eng._tick()
+    assert len([o for o in p.orders if o[0] == "BUY"]) == n, "must not re-enter same touch"
+    # Price leaves the band and re-touches -> one new entry allowed.
+    p.price = 530.0; eng._tick()   # leaves band -> re-arm
+    p.price = 525.3; eng._tick()   # re-touch -> entry
+    assert len([o for o in p.orders if o[0] == "BUY"]) == n + 1
 
 
 def test_exit_at_mid_on_downgrade():
