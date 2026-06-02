@@ -320,6 +320,8 @@ class Engine:
                 "contracts": settings.contracts,
                 "proximity": settings.proximity,
                 "strike_offset": settings.strike_offset,
+                "market_data_provider": (settings.market_data_provider if self.providers.mode == "live" else "mock"),
+                "options_provider": (settings.options_provider if self.providers.mode == "live" else "mock"),
                 "tickers": tickers,
                 "trades": self.trades.recent(40),
                 "summary": self.trades.summary(),

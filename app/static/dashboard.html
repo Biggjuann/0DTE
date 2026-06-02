@@ -65,15 +65,19 @@
   .b-caution{background:rgba(251,191,36,.12);color:var(--amber);border:1px solid rgba(251,191,36,.3)}
   .b-off{background:rgba(248,113,113,.1);color:var(--red);border:1px solid rgba(248,113,113,.3)}
   /* level ladder */
-  .ladder{position:relative;height:150px;margin:14px 0 6px;border-left:2px solid var(--line);
-    padding-left:0}
+  .ladder{position:relative;height:172px;margin:14px 0 6px;border-left:2px solid var(--line)}
   .rung{position:absolute;left:0;right:0;height:0;border-top:1px dashed var(--line)}
-  .rung .lab{position:absolute;left:8px;top:-9px;font-size:11px;letter-spacing:.5px;
-    text-transform:uppercase;color:var(--muted);background:var(--panel);padding:0 6px}
-  .rung .val{position:absolute;right:6px;top:-9px;font-weight:700}
-  .rung.top{border-color:rgba(52,211,153,.5)} .rung.top .val{color:var(--green)}
-  .rung.mid{border-color:rgba(167,139,250,.5)} .rung.mid .val{color:var(--violet)}
-  .rung.low{border-color:rgba(248,113,113,.5)} .rung.low .val{color:var(--red)}
+  .rung.top{border-color:rgba(52,211,153,.55)}
+  .rung.mid{border-color:rgba(167,139,250,.55)}
+  .rung.low{border-color:rgba(248,113,113,.55)}
+  .rlab{position:absolute;left:0;right:0;display:flex;justify-content:space-between;align-items:center;
+    transform:translateY(50%);font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;pointer-events:none}
+  .rlab span{color:var(--muted);background:var(--panel);padding:0 6px}
+  .rlab b{background:var(--panel);padding:0 6px;font-weight:800}
+  .rlab.top b{color:var(--green)} .rlab.mid b{color:var(--violet)} .rlab.low b{color:var(--red)}
+  .fresh{font-size:10px;font-weight:700;color:var(--green);border:1px solid rgba(52,211,153,.4);
+    border-radius:6px;padding:1px 6px;margin-left:8px}
+  .fresh.stale{color:var(--red);border-color:rgba(248,113,113,.45)}
   .pxmark{position:absolute;right:0;left:0;height:2px;background:var(--teal);
     box-shadow:0 0 10px var(--teal);transition:bottom .6s ease}
   .pxmark .tag{position:absolute;right:6px;top:-20px;font-size:11px;font-weight:800;color:var(--teal);
@@ -122,6 +126,7 @@
   <span class="badge" id="modeBadge">—</span>
   <span class="badge" id="dryBadge">—</span>
   <span class="clock"><span class="dot" id="runDot"></span><span id="runTxt">—</span></span>
+  <span class="clock" id="srcTxt" style="font-size:11px"></span>
   <div class="spacer"></div>
   <span class="clock mono" id="clock">--:--:--</span>
   <button class="btn" onclick="ctl('start')">Start</button>
@@ -166,21 +171,32 @@ function statusBanner(mm){
 
 function ladder(lv,price){
   if(!lv) return '<div class="empty">awaiting levels…</div>';
-  const lo=lv.lower, mid=lv.mid, top=lv.top;
-  const pad=(top-lo)*0.12||1;
-  const min=Math.min(lo,price??lo)-pad, max=Math.max(top,price??top)+pad;
-  const pct=v=>Math.max(0,Math.min(100,(v-min)/(max-min)*100));
   const prox=window.PROX||1;
-  const near=(p,l)=>price!=null&&Math.abs(price-l)<=prox;
-  let h='<div class="ladder">';
-  const rung=(v,cls,lab)=>`<div class="rung ${cls} ${near(price,v)?'near':''}" style="bottom:${pct(v)}%">
-      <span class="lab">${lab}</span><span class="val mono">${fmt(v)}</span></div>`;
-  h+=rung(top,'top','Top · call wall');
-  h+=rung(mid,'mid','Mid · gvwap');
-  h+=rung(lo,'low','Lower · put wall');
-  if(price!=null) h+=`<div class="pxmark" style="bottom:${pct(price)}%"><span class="tag mono">${fmt(price)}</span></div>`;
-  h+='</div>';
-  return h;
+  const items=[{v:lv.top,cls:'top',lab:'Top · call wall'},
+               {v:lv.mid,cls:'mid',lab:'Mid · gvwap'},
+               {v:lv.lower,cls:'low',lab:'Lower · put wall'}];
+  const vals=items.map(i=>i.v).concat(price!=null?[price]:[]);
+  const pad=(Math.max(...vals)-Math.min(...vals))*0.15||1;
+  const min=Math.min(...vals)-pad, max=Math.max(...vals)+pad;
+  const pct=v=>Math.max(2,Math.min(98,(v-min)/(max-min)*100));
+  const near=l=>price!=null&&Math.abs(price-l)<=prox;
+  // True-position dashed lines.
+  const lines=items.map(i=>`<div class="rung ${i.cls} ${near(i.v)?'near':''}" style="bottom:${pct(i.v)}%"></div>`).join('');
+  // Labels with collision avoidance so near-coincident levels don't overlap.
+  const labs=items.map(i=>({...i,pos:pct(i.v)})).sort((a,b)=>a.pos-b.pos);
+  const GAP=13;
+  for(let k=1;k<labs.length;k++) if(labs[k].pos-labs[k-1].pos<GAP) labs[k].pos=labs[k-1].pos+GAP;
+  const labels=labs.map(i=>`<div class="rlab ${i.cls} ${near(i.v)?'near':''}" style="bottom:${i.pos}%">
+      <span>${i.lab}</span><b class="mono">${fmt(i.v)}</b></div>`).join('');
+  const px=price!=null?`<div class="pxmark" style="bottom:${pct(price)}%"><span class="tag mono">${fmt(price)}</span></div>`:'';
+  return `<div class="ladder">${lines}${labels}${px}</div>`;
+}
+
+function freshness(t){
+  if(!t.quote||window.SRV==null) return '';
+  const age=window.SRV-t.quote.asof;
+  const stale=age>20;
+  return `<span class="fresh ${stale?'stale':''}">${age<2?'live':Math.round(age)+'s ago'}</span>`;
 }
 
 function flow(mm){
@@ -223,6 +239,7 @@ function card(t){
       <span class="state-pill ${stCls}">${t.state}</span>
       <div class="spacer"></div>
       <span class="price mono">${t.quote?fmt(t.quote.last):'—'}</span>
+      ${freshness(t)}
     </div>
     <div class="banner ${b.cls}">${b.txt}</div>
     ${ladder(t.levels,t.quote?t.quote.last:null)}
@@ -235,7 +252,10 @@ function card(t){
 function render(s){
   window.PROX=s.proximity;
   window.SOFF=s.strike_offset;
+  window.SRV=s.server_time;
   AUTO=s.auto_trade;
+  document.getElementById('srcTxt').textContent=
+    s.mode==='live'?`· data: ${s.market_data_provider}`:'· data: mock';
   document.getElementById('modeBadge').textContent=s.mode;
   document.getElementById('modeBadge').className='badge '+(s.mode==='live'?'live':'mock');
   const dry=document.getElementById('dryBadge');

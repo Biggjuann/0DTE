@@ -42,40 +42,52 @@ class SchwabClient:
 
     # --- MarketData ----------------------------------------------------------
     def get_quote(self, ticker: str) -> Optional[Quote]:
-        """Use the last completed 1-minute candle close as minute_close."""
+        """Real-time `last` (ticks continuously) + last completed 1-min close.
+
+        The displayed/trigger split matters: `last` updates every poll so the
+        dashboard ticks live, while `minute_close` is the value the entry rule
+        ("1-minute close within $1 of lower") evaluates against.
+        """
+        last = self._realtime_last(ticker)
+        mclose = self._minute_close(ticker)
+        if last is None and mclose is None:
+            log.warning("schwab: no quote for %s (token/entitlement/market?)", ticker)
+            return None
+        last = last if last is not None else mclose
+        mclose = mclose if mclose is not None else last
+        return Quote(ticker=ticker, last=last, minute_close=mclose)
+
+    def _realtime_last(self, ticker: str) -> Optional[float]:
+        try:
+            r = self.client.get(f"{self.base}/marketdata/v1/{ticker}/quotes", headers=self._headers())
+            if r.status_code == 200:
+                j = r.json().get(ticker, {})
+                q = j.get("quote", j)
+                px = (q.get("lastPrice") or q.get("mark")
+                      or q.get("extendedMarketLastPrice") or q.get("closePrice"))
+                if px:
+                    return float(px)
+        except Exception as exc:  # pragma: no cover - network
+            log.debug("schwab realtime quote %s failed: %s", ticker, exc)
+        return None
+
+    def _minute_close(self, ticker: str) -> Optional[float]:
         try:
             r = self.client.get(
                 f"{self.base}/marketdata/v1/pricehistory",
                 headers=self._headers(),
                 params={
-                    "symbol": ticker,
-                    "periodType": "day",
-                    "period": 1,
-                    "frequencyType": "minute",
-                    "frequency": 1,
-                    "needExtendedHoursData": "false",
+                    "symbol": ticker, "periodType": "day", "period": 1,
+                    "frequencyType": "minute", "frequency": 1,
+                    "needExtendedHoursData": "true",
                 },
             )
             if r.status_code == 200:
                 candles = r.json().get("candles") or []
                 if candles:
-                    last = candles[-1]
-                    return Quote(ticker=ticker, last=float(last["close"]),
-                                 minute_close=float(last["close"]))
+                    return float(candles[-1]["close"])
         except Exception as exc:  # pragma: no cover - network
             log.debug("schwab pricehistory %s failed: %s", ticker, exc)
-        # Fallback: plain quote.
-        try:
-            r = self.client.get(f"{self.base}/marketdata/v1/{ticker}/quotes",
-                                 headers=self._headers())
-            if r.status_code == 200:
-                j = r.json().get(ticker, {})
-                q = j.get("quote", j)
-                px = float(q.get("lastPrice") or q.get("mark") or 0)
-                if px:
-                    return Quote(ticker=ticker, last=px, minute_close=px)
-        except Exception as exc:  # pragma: no cover - network
-            log.debug("schwab quote %s failed: %s", ticker, exc)
         return None
 
     def _today(self) -> str:
