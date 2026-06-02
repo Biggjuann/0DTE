@@ -76,6 +76,9 @@ def control(action: str) -> dict:
         engine.auto_trade = True
     elif action == "auto_off":
         engine.auto_trade = False
+    elif action == "clear_trades":
+        removed = engine.trades.clear()
+        return {"ok": True, "cleared": removed}
     else:
         return {"ok": False, "error": f"unknown action '{action}'"}
     return {"ok": True, "running": engine.running, "auto_trade": engine.auto_trade}

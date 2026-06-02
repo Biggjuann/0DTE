@@ -49,6 +49,14 @@ class TradeLog:
         with self._lock:
             return list(self._trades)
 
+    def clear(self) -> int:
+        """Wipe the trade log. Returns the number of records removed."""
+        with self._lock:
+            n = len(self._trades)
+            self._trades = []
+            self._save()
+        return n
+
     def recent(self, limit: int = 50) -> List[dict]:
         with self._lock:
             return list(reversed(self._trades[-limit:]))

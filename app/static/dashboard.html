@@ -143,6 +143,7 @@
       <span class="spacer" style="flex:1"></span>
       <span id="exitTypes" class="muted" style="font-size:11px;letter-spacing:0;text-transform:none"></span>
       <a class="btn" href="/api/trades.csv" download style="text-decoration:none">⬇ Download CSV</a>
+      <button class="btn kill" onclick="clearLog()">Clear log</button>
     </h3>
     <table>
       <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Contract</th><th>Strike</th>
@@ -160,6 +161,11 @@ const k=n=>n==null?'—':n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(1)
 
 async function ctl(a){await fetch('/api/control/'+a,{method:'POST'});setTimeout(refresh,150);}
 function toggleAuto(){ctl(AUTO?'auto_off':'auto_on');}
+async function clearLog(){
+  if(!confirm('Clear the entire trade log? This cannot be undone.')) return;
+  const r=await fetch('/api/control/clear_trades',{method:'POST'});
+  const j=await r.json(); alert('Cleared '+(j.cleared||0)+' records'); refresh();
+}
 
 function statusBanner(mm){
   if(!mm) return {cls:'b-off',txt:'No MM signal'};
