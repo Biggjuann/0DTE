@@ -1,0 +1,169 @@
+"""Domain models shared across the strategy, clients and API layer."""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+from typing import List, Optional
+
+
+class MMStatus(str, Enum):
+    """Trend status published by the MM service.
+
+    Only LONG / CAUTIOUS_LONG grant entry approval for this long-only system.
+    Anything else is treated as "no approval" (and forces a protective exit
+    if we are already in a position).
+    """
+
+    LONG = "long"
+    CAUTIOUS_LONG = "cautious_long"
+    NEUTRAL = "neutral"
+    CAUTIOUS_SHORT = "cautious_short"
+    SHORT = "short"
+    UNKNOWN = "unknown"
+
+    @classmethod
+    def parse(cls, raw: object) -> "MMStatus":
+        if isinstance(raw, MMStatus):
+            return raw
+        s = str(raw or "").strip().lower().replace(" ", "_").replace("-", "_")
+        mapping = {
+            "long": cls.LONG,
+            "long_bias": cls.LONG,
+            "bullish": cls.LONG,
+            "cautious_long": cls.CAUTIOUS_LONG,
+            "cautiously_long": cls.CAUTIOUS_LONG,
+            "neutral": cls.NEUTRAL,
+            "flat": cls.NEUTRAL,
+            "cautious_short": cls.CAUTIOUS_SHORT,
+            "short": cls.SHORT,
+            "bearish": cls.SHORT,
+        }
+        return mapping.get(s, cls.UNKNOWN)
+
+    @property
+    def approves_entry(self) -> bool:
+        return self in (MMStatus.LONG, MMStatus.CAUTIOUS_LONG)
+
+
+class PositionState(str, Enum):
+    DISABLED = "disabled"   # MM status does not approve trading
+    ARMED = "armed"         # approved + watching for the entry trigger
+    OPEN = "open"           # holding a long 0DTE call
+    FLAT = "flat"           # approved-but-idle baseline (no trigger yet)
+
+
+@dataclass
+class Levels:
+    """The three structural levels derived from Gammagamma (weekly)."""
+
+    ticker: str
+    lower: float            # lowest put wall on the weekly
+    mid: float              # gvwap (preferred) or gamma flip
+    top: float              # highest call wall on the weekly
+    gvwap: Optional[float] = None
+    gamma_flip: Optional[float] = None
+    lowest_put: Optional[float] = None
+    highest_call: Optional[float] = None
+    spot: Optional[float] = None
+    expiry: Optional[str] = None
+    asof: float = field(default_factory=time.time)
+
+
+@dataclass
+class MMSignal:
+    """Trend + flow snapshot from the MM service."""
+
+    ticker: str
+    status: MMStatus = MMStatus.UNKNOWN
+    puts_below_spot: float = 0.0
+    puts_at_above_spot: float = 0.0
+    calls_below_spot: float = 0.0
+    calls_at_above_spot: float = 0.0
+    reasoning: List[str] = field(default_factory=list)
+    asof: float = field(default_factory=time.time)
+
+    @property
+    def bull_control(self) -> bool:
+        """Bulls in control: puts below spot dominate calls at/above spot.
+
+        Mirrors the MM dashboard's "BULLS in control" confirmation line and is
+        used as the flow confirmation gate on entries.
+        """
+        return self.puts_below_spot > self.calls_at_above_spot
+
+
+@dataclass
+class Quote:
+    ticker: str
+    last: float
+    minute_close: float          # close of the most recent completed 1-minute bar
+    asof: float = field(default_factory=time.time)
+
+
+@dataclass
+class OptionContract:
+    symbol: str
+    strike: float
+    expiry: str
+    bid: float = 0.0
+    ask: float = 0.0
+    last: float = 0.0
+
+    @property
+    def mid(self) -> float:
+        if self.bid and self.ask:
+            return round((self.bid + self.ask) / 2, 2)
+        return self.last or self.ask or self.bid
+
+
+@dataclass
+class Position:
+    ticker: str
+    contract_symbol: str
+    strike: float
+    expiry: str
+    qty: int
+    entry_price: float           # per-contract premium paid
+    entry_time: float
+    entry_underlying: float
+    current_price: float = 0.0   # current per-contract premium
+    last_underlying: float = 0.0
+
+    @property
+    def pnl(self) -> float:
+        return round((self.current_price - self.entry_price) * 100 * self.qty, 2)
+
+    @property
+    def pnl_pct(self) -> float:
+        if not self.entry_price:
+            return 0.0
+        return round((self.current_price - self.entry_price) / self.entry_price * 100, 2)
+
+
+@dataclass
+class TradeRecord:
+    ts: float
+    ticker: str
+    action: str                  # ENTRY / EXIT
+    reason: str
+    underlying: float
+    contract_symbol: str
+    strike: float
+    qty: int
+    price: float                 # premium
+    pnl: Optional[float] = None
+    dry_run: bool = True
+
+
+def to_jsonable(obj):
+    """Recursively convert dataclasses / enums to JSON-serialisable structures."""
+    if isinstance(obj, Enum):
+        return obj.value
+    if hasattr(obj, "__dataclass_fields__"):
+        return {k: to_jsonable(v) for k, v in asdict(obj).items()}
+    if isinstance(obj, dict):
+        return {k: to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_jsonable(v) for v in obj]
+    return obj

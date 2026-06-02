@@ -1,0 +1,142 @@
+"""State-machine tests using a scripted provider (no network)."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.clients.base import Fill
+from app.clients.factory import Providers
+from app.config import settings
+from app.models import (Levels, MMSignal, MMStatus, OptionContract,
+                        PositionState, Quote)
+from app.strategy.engine import Engine
+
+
+class ScriptProvider:
+    """Hand-driven provider; mutate attributes between ticks to script scenarios."""
+
+    def __init__(self):
+        self.levels = Levels(ticker="QQQ", lower=525.0, mid=532.0, top=540.0,
+                             gvwap=532.0, lowest_put=525.0, highest_call=540.0)
+        self.status = MMStatus.LONG
+        self.puts_below = 1_400_000
+        self.calls_above = 900_000
+        self.price = 530.0
+        self.orders = []
+
+    # LevelsProvider
+    def get_levels(self, ticker): return self.levels
+    # MMProvider
+    def get_signal(self, ticker):
+        return MMSignal(ticker=ticker, status=self.status,
+                        puts_below_spot=self.puts_below, calls_at_above_spot=self.calls_above)
+    # MarketData
+    def get_quote(self, ticker): return Quote(ticker=ticker, last=self.price, minute_close=self.price)
+    def get_0dte_calls(self, ticker, near_strike, width=5.0):
+        return [OptionContract(symbol=f"{ticker}_C{int(near_strike)}", strike=float(int(near_strike)),
+                               expiry="0dte", bid=1.2, ask=1.3, last=1.25)]
+    def get_contract(self, symbol):
+        # premium tracks the underlying for P&L realism
+        strike = float(symbol.split("C")[-1])
+        prem = max(0.0, self.price - strike) + 1.0
+        return OptionContract(symbol=symbol, strike=strike, expiry="0dte",
+                              bid=prem - .05, ask=prem + .05, last=prem)
+    # Broker
+    def buy_to_open_call(self, contract, qty):
+        self.orders.append(("BUY", contract.symbol, qty)); return Fill(True, contract.ask, "ok")
+    def sell_to_close_call(self, contract, qty):
+        self.orders.append(("SELL", contract.symbol, qty)); return Fill(True, contract.bid, "ok")
+
+
+def make_engine(p):
+    settings.tickers = ["QQQ"]
+    settings.proximity = 1.0
+    settings.contracts = 1
+    # Re-poll every tick so scripted state changes are picked up immediately.
+    settings.levels_poll_seconds = 0
+    settings.mm_poll_seconds = 0
+    settings.quote_poll_seconds = 0
+    eng = Engine(providers=Providers(levels=p, mm=p, market=p, broker=p, mode="test"))
+    return eng
+
+
+def st(eng): return eng.states["QQQ"]
+
+
+def test_no_entry_without_approval():
+    p = ScriptProvider(); p.status = MMStatus.NEUTRAL; p.price = 525.0
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.DISABLED
+    assert st(eng).position is None
+
+
+def test_no_entry_until_near_lower():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 530.0  # not within $1 of 525
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.ARMED
+    assert st(eng).position is None
+
+
+def test_entry_triggers_at_lower_with_bull_control():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4  # within $1 of lower 525
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    assert st(eng).position.strike == 532.0  # strike == mid
+    assert ("BUY", "QQQ_C532", 1) in p.orders
+
+
+def test_no_entry_without_bull_control():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    p.puts_below = 100; p.calls_above = 900_000  # flow not confirming
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.ARMED
+    assert st(eng).position is None
+
+
+def test_exit_at_mid_on_downgrade():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.2
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    # Price climbs to mid and status downgrades -> exit at mid
+    p.price = 531.8; p.status = MMStatus.CAUTIOUS_LONG
+    eng._tick()
+    assert st(eng).position is None
+    assert any(o[0] == "SELL" for o in p.orders)
+
+
+def test_hold_to_top_while_long():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    # At mid but STILL long -> must NOT exit
+    p.price = 532.0
+    eng._tick()
+    assert st(eng).state is PositionState.OPEN, "should hold through mid while LONG"
+    # Reaches top while long -> exit at top
+    p.price = 539.6
+    eng._tick()
+    assert st(eng).position is None
+    assert any(o[0] == "SELL" for o in p.orders)
+
+
+def test_protective_exit_on_bearish():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    p.status = MMStatus.SHORT; p.price = 528.0
+    eng._tick()
+    assert st(eng).position is None
+    assert st(eng).state is PositionState.DISABLED
+
+
+if __name__ == "__main__":
+    import traceback
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    passed = 0
+    for fn in fns:
+        try:
+            fn(); print(f"PASS  {fn.__name__}"); passed += 1
+        except Exception:
+            print(f"FAIL  {fn.__name__}"); traceback.print_exc()
+    print(f"\n{passed}/{len(fns)} passed")
+    sys.exit(0 if passed == len(fns) else 1)

@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>0DTE · Long-Only Auto-Trader</title>
+<style>
+  :root{
+    --bg:#070b14; --panel:#0d1320; --panel2:#111a2b; --line:#1c2740;
+    --txt:#e6edf7; --muted:#7e8aa3; --dim:#56627d;
+    --teal:#22d3b7; --green:#34d399; --red:#f87171; --amber:#fbbf24;
+    --blue:#38bdf8; --violet:#a78bfa;
+    --glow:0 0 0 1px rgba(34,211,183,.18), 0 8px 40px -12px rgba(34,211,183,.25);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,#0e1830 0%,var(--bg) 55%);
+    color:var(--txt);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .mono{font-family:"SF Mono",ui-monospace,"Roboto Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+  a{color:inherit}
+  /* top bar */
+  header{display:flex;align-items:center;gap:18px;padding:14px 22px;
+    border-bottom:1px solid var(--line);background:rgba(8,12,22,.7);backdrop-filter:blur(8px);
+    position:sticky;top:0;z-index:10}
+  .brand{font-weight:800;letter-spacing:.5px;font-size:18px}
+  .brand b{color:var(--teal)}
+  .badge{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;
+    padding:4px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+  .badge.live{color:#04140f;background:var(--green);border-color:transparent}
+  .badge.mock{color:var(--blue);border-color:rgba(56,189,248,.35)}
+  .badge.dry{color:var(--amber);border-color:rgba(251,191,36,.35)}
+  .badge.armed-real{color:#170707;background:var(--red);border-color:transparent}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;background:var(--dim)}
+  .dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .spacer{flex:1}
+  .btn{cursor:pointer;font-size:12px;font-weight:700;letter-spacing:.4px;color:var(--txt);
+    background:var(--panel2);border:1px solid var(--line);padding:7px 13px;border-radius:8px;
+    transition:.15s}
+  .btn:hover{border-color:var(--teal);color:var(--teal)}
+  .btn.kill:hover{border-color:var(--red);color:var(--red)}
+  .clock{color:var(--muted);font-size:12px}
+  /* layout */
+  main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
+  .summary{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:20px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+  .stat .k{font-size:11px;letter-spacing:.7px;text-transform:uppercase;color:var(--muted)}
+  .stat .v{font-size:26px;font-weight:800;margin-top:4px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:1000px){.grid{grid-template-columns:1fr}.summary{grid-template-columns:repeat(2,1fr)}}
+  /* ticker card */
+  .card{background:linear-gradient(180deg,var(--panel) 0%,#0a1019 100%);
+    border:1px solid var(--line);border-radius:16px;padding:18px;position:relative;overflow:hidden}
+  .card.open{box-shadow:var(--glow);border-color:rgba(34,211,183,.3)}
+  .chead{display:flex;align-items:center;gap:12px;margin-bottom:4px}
+  .tkr{font-size:22px;font-weight:800;letter-spacing:.5px}
+  .price{font-size:22px;font-weight:800}
+  .state-pill{font-size:11px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;
+    padding:4px 10px;border-radius:999px}
+  .st-open{background:rgba(34,211,183,.15);color:var(--teal);border:1px solid rgba(34,211,183,.4)}
+  .st-armed{background:rgba(251,191,36,.12);color:var(--amber);border:1px solid rgba(251,191,36,.35)}
+  .st-disabled{background:rgba(126,138,163,.1);color:var(--muted);border:1px solid var(--line)}
+  .banner{margin:12px 0;padding:9px 12px;border-radius:10px;font-weight:700;font-size:13px;
+    display:flex;align-items:center;gap:8px}
+  .b-long{background:rgba(52,211,153,.12);color:var(--green);border:1px solid rgba(52,211,153,.3)}
+  .b-caution{background:rgba(251,191,36,.12);color:var(--amber);border:1px solid rgba(251,191,36,.3)}
+  .b-off{background:rgba(248,113,113,.1);color:var(--red);border:1px solid rgba(248,113,113,.3)}
+  /* level ladder */
+  .ladder{position:relative;height:150px;margin:14px 0 6px;border-left:2px solid var(--line);
+    padding-left:0}
+  .rung{position:absolute;left:0;right:0;height:0;border-top:1px dashed var(--line)}
+  .rung .lab{position:absolute;left:8px;top:-9px;font-size:11px;letter-spacing:.5px;
+    text-transform:uppercase;color:var(--muted);background:var(--panel);padding:0 6px}
+  .rung .val{position:absolute;right:6px;top:-9px;font-weight:700}
+  .rung.top{border-color:rgba(52,211,153,.5)} .rung.top .val{color:var(--green)}
+  .rung.mid{border-color:rgba(167,139,250,.5)} .rung.mid .val{color:var(--violet)}
+  .rung.low{border-color:rgba(248,113,113,.5)} .rung.low .val{color:var(--red)}
+  .pxmark{position:absolute;right:0;left:0;height:2px;background:var(--teal);
+    box-shadow:0 0 10px var(--teal);transition:bottom .6s ease}
+  .pxmark .tag{position:absolute;right:6px;top:-20px;font-size:11px;font-weight:800;color:var(--teal);
+    background:var(--panel2);padding:1px 7px;border-radius:6px;border:1px solid rgba(34,211,183,.4)}
+  .near{animation:pulse 1.2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+  /* flow */
+  .flow{margin-top:10px}
+  .flowrow{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:12px}
+  .flowrow .lbl{width:120px;color:var(--muted)}
+  .bar{flex:1;height:9px;border-radius:5px;background:var(--panel2);overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:5px}
+  .bar.p i{background:linear-gradient(90deg,#f8717155,var(--red))}
+  .bar.c i{background:linear-gradient(90deg,#34d39955,var(--green))}
+  .flowrow .num{width:90px;text-align:right;font-weight:700}
+  .ctrl{font-size:12px;font-weight:800;letter-spacing:.5px;margin-top:8px}
+  .ctrl.bull{color:var(--green)} .ctrl.bear{color:var(--red)}
+  /* position */
+  .pos{margin-top:12px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .pos .row{display:flex;justify-content:space-between;margin:3px 0;font-size:13px}
+  .pos .row span:first-child{color:var(--muted)}
+  .pnl-pos{color:var(--green)} .pnl-neg{color:var(--red)}
+  .targets{display:flex;gap:8px;margin-top:8px;font-size:11px;color:var(--muted)}
+  .targets b{color:var(--txt)}
+  /* events */
+  .events{margin-top:12px;max-height:120px;overflow:auto;font-size:11.5px;color:var(--dim)}
+  .events div{padding:2px 0;border-bottom:1px solid rgba(28,39,64,.5)}
+  .events .mono{color:var(--muted)}
+  /* trade log */
+  .tlog{margin-top:24px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px}
+  .tlog h3{margin:0 0 12px;font-size:13px;letter-spacing:.7px;text-transform:uppercase;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;color:var(--muted);font-weight:600;padding:6px 10px;border-bottom:1px solid var(--line);
+    font-size:11px;letter-spacing:.5px;text-transform:uppercase}
+  td{padding:7px 10px;border-bottom:1px solid rgba(28,39,64,.5)}
+  .tag-entry{color:var(--blue);font-weight:700}
+  .tag-exit{color:var(--amber);font-weight:700}
+  .mini{font-size:10px;color:var(--amber);border:1px solid rgba(251,191,36,.3);padding:1px 5px;border-radius:5px}
+  .muted{color:var(--muted)}
+  .empty{color:var(--dim);text-align:center;padding:18px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">0<b>DTE</b></div>
+  <span class="badge" id="modeBadge">—</span>
+  <span class="badge" id="dryBadge">—</span>
+  <span class="clock"><span class="dot" id="runDot"></span><span id="runTxt">—</span></span>
+  <div class="spacer"></div>
+  <span class="clock mono" id="clock">--:--:--</span>
+  <button class="btn" onclick="ctl('start')">Start</button>
+  <button class="btn" onclick="ctl('stop')">Stop</button>
+  <button class="btn" id="autoBtn" onclick="toggleAuto()">Auto: —</button>
+  <button class="btn kill" onclick="if(confirm('Flatten all & halt trading?'))ctl('kill')">Kill</button>
+</header>
+
+<main>
+  <div class="summary" id="summary"></div>
+  <div class="grid" id="cards"></div>
+  <div class="tlog">
+    <h3>Trade Log</h3>
+    <table>
+      <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Contract</th><th>Strike</th>
+        <th>Qty</th><th>Price</th><th>P&amp;L</th><th>Reason</th></tr></thead>
+      <tbody id="tlog"></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+let AUTO=true;
+const fmt=(n,d=2)=>n==null?'—':Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+const money=n=>n==null?'—':(n<0?'-$':'$')+Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const k=n=>n==null?'—':n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':n.toFixed(0);
+
+async function ctl(a){await fetch('/api/control/'+a,{method:'POST'});setTimeout(refresh,150);}
+function toggleAuto(){ctl(AUTO?'auto_off':'auto_on');}
+
+function statusBanner(mm){
+  if(!mm) return {cls:'b-off',txt:'No MM signal'};
+  const s=mm.status;
+  if(s==='long') return {cls:'b-long',txt:'LONG — bias confirmed, ride it'};
+  if(s==='cautious_long') return {cls:'b-caution',txt:'CAUTIOUS LONG — momentum cooling'};
+  return {cls:'b-off',txt:s.replace('_',' ').toUpperCase()+' — no long approval'};
+}
+
+function ladder(lv,price){
+  if(!lv) return '<div class="empty">awaiting levels…</div>';
+  const lo=lv.lower, mid=lv.mid, top=lv.top;
+  const pad=(top-lo)*0.12||1;
+  const min=Math.min(lo,price??lo)-pad, max=Math.max(top,price??top)+pad;
+  const pct=v=>Math.max(0,Math.min(100,(v-min)/(max-min)*100));
+  const prox=window.PROX||1;
+  const near=(p,l)=>price!=null&&Math.abs(price-l)<=prox;
+  let h='<div class="ladder">';
+  const rung=(v,cls,lab)=>`<div class="rung ${cls} ${near(price,v)?'near':''}" style="bottom:${pct(v)}%">
+      <span class="lab">${lab}</span><span class="val mono">${fmt(v)}</span></div>`;
+  h+=rung(top,'top','Top · call wall');
+  h+=rung(mid,'mid','Mid · gvwap');
+  h+=rung(lo,'low','Lower · put wall');
+  if(price!=null) h+=`<div class="pxmark" style="bottom:${pct(price)}%"><span class="tag mono">${fmt(price)}</span></div>`;
+  h+='</div>';
+  return h;
+}
+
+function flow(mm){
+  if(!mm) return '';
+  const pb=mm.puts_below_spot||0, ca=mm.calls_at_above_spot||0;
+  const mx=Math.max(pb,ca,1);
+  const bull=mm.bull_control;
+  return `<div class="flow">
+    <div class="flowrow"><span class="lbl">Puts below spot</span>
+      <div class="bar p"><i style="width:${pb/mx*100}%"></i></div><span class="num mono">${k(pb)}</span></div>
+    <div class="flowrow"><span class="lbl">Calls ≥ spot</span>
+      <div class="bar c"><i style="width:${ca/mx*100}%"></i></div><span class="num mono">${k(ca)}</span></div>
+    <div class="ctrl ${bull?'bull':'bear'}">${bull?'▲ BULLS IN CONTROL — flow confirms':'▼ flow not confirming (calls ≥ spot dominate)'}</div>
+  </div>`;
+}
+
+function position(t){
+  const p=t.position;
+  if(!p){
+    const lv=t.levels;
+    if(t.state==='armed'&&lv) return `<div class="targets">Armed · entry trigger near lower <b>${fmt(lv.lower)}</b> · strike would be mid <b>${fmt(lv.mid)}</b></div>`;
+    return '';
+  }
+  const cls=t.pnl>=0?'pnl-pos':'pnl-neg', lv=t.levels;
+  return `<div class="pos">
+    <div class="row"><span>Contract</span><span class="mono">${p.contract_symbol}</span></div>
+    <div class="row"><span>Strike / Qty</span><span class="mono">${fmt(p.strike)} × ${p.qty}</span></div>
+    <div class="row"><span>Entry → Now</span><span class="mono">${fmt(p.entry_price)} → ${fmt(p.current_price)}</span></div>
+    <div class="row"><span>P&amp;L</span><span class="mono ${cls}">${money(t.pnl)} (${fmt(t.pnl_pct,1)}%)</span></div>
+    ${lv?`<div class="targets">Exit: mid <b>${fmt(lv.mid)}</b> if downgraded · top <b>${fmt(lv.top)}</b> if stays long</div>`:''}
+  </div>`;
+}
+
+function card(t){
+  const b=statusBanner(t.mm);
+  const stCls=t.state==='open'?'st-open':t.state==='armed'?'st-armed':'st-disabled';
+  return `<div class="card ${t.state==='open'?'open':''}">
+    <div class="chead">
+      <span class="tkr">${t.ticker}</span>
+      <span class="state-pill ${stCls}">${t.state}</span>
+      <div class="spacer"></div>
+      <span class="price mono">${t.quote?fmt(t.quote.last):'—'}</span>
+    </div>
+    <div class="banner ${b.cls}">${b.txt}</div>
+    ${ladder(t.levels,t.quote?t.quote.last:null)}
+    ${flow(t.mm)}
+    ${position(t)}
+    <div class="events">${(t.events||[]).map(e=>{const i=e.indexOf(' ');return `<div><span class="mono">${e.slice(0,8)}</span> ${e.slice(8)}</div>`;}).join('')||'<div class="muted">no events yet</div>'}</div>
+  </div>`;
+}
+
+function render(s){
+  window.PROX=s.proximity;
+  AUTO=s.auto_trade;
+  document.getElementById('modeBadge').textContent=s.mode;
+  document.getElementById('modeBadge').className='badge '+(s.mode==='live'?'live':'mock');
+  const dry=document.getElementById('dryBadge');
+  dry.textContent=s.dry_run?'DRY RUN':'LIVE ORDERS';
+  dry.className='badge '+(s.dry_run?'dry':'armed-real');
+  document.getElementById('runDot').className='dot'+(s.running?' on':'');
+  document.getElementById('runTxt').textContent=s.running?'engine running':'stopped';
+  const ab=document.getElementById('autoBtn');
+  ab.textContent='Auto: '+(s.auto_trade?'ON':'OFF');
+
+  const openCount=s.tickers.filter(t=>t.state==='open').length;
+  const sm=s.summary;
+  const stat=(kk,v,cls='')=>`<div class="stat"><div class="k">${kk}</div><div class="v ${cls}">${v}</div></div>`;
+  document.getElementById('summary').innerHTML=
+    stat("Today P&L",money(sm.today_pnl),sm.today_pnl>=0?'pnl-pos':'pnl-neg')+
+    stat("Realized P&L",money(sm.realized_pnl),sm.realized_pnl>=0?'pnl-pos':'pnl-neg')+
+    stat("Win Rate",sm.win_rate+'%')+
+    stat("Closed Trades",sm.closed_trades)+
+    stat("Open Positions",openCount,openCount?'pnl-pos':'');
+
+  document.getElementById('cards').innerHTML=s.tickers.map(card).join('');
+
+  const tb=document.getElementById('tlog');
+  if(!s.trades.length){tb.innerHTML='<tr><td colspan="9" class="empty">No trades yet</td></tr>';}
+  else tb.innerHTML=s.trades.map(t=>{
+    const time=new Date(t.ts*1000).toLocaleTimeString();
+    const pnl=t.pnl==null?'—':`<span class="${t.pnl>=0?'pnl-pos':'pnl-neg'} mono">${money(t.pnl)}</span>`;
+    return `<tr><td class="mono muted">${time}</td><td><b>${t.ticker}</b></td>
+      <td class="tag-${t.action.toLowerCase()}">${t.action}</td>
+      <td class="mono">${t.contract_symbol}</td><td class="mono">${fmt(t.strike)}</td>
+      <td class="mono">${t.qty}</td><td class="mono">${fmt(t.price)}</td><td>${pnl}</td>
+      <td class="muted">${t.reason}${t.dry_run?' <span class="mini">DRY</span>':''}</td></tr>`;
+  }).join('');
+}
+
+async function refresh(){
+  try{const r=await fetch('/api/state');render(await r.json());}catch(e){}
+}
+setInterval(()=>document.getElementById('clock').textContent=new Date().toLocaleTimeString(),1000);
+setInterval(refresh,2000);
+refresh();
+</script>
+</body>
+</html>
