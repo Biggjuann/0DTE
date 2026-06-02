@@ -197,7 +197,7 @@ function position(t){
   const p=t.position;
   if(!p){
     const lv=t.levels;
-    if(t.state==='armed'&&lv) return `<div class="targets">Armed · entry trigger near lower <b>${fmt(lv.lower)}</b> · strike would be mid <b>${fmt(lv.mid)}</b></div>`;
+    if(t.state==='armed'&&lv) return `<div class="targets">Armed · entry trigger near lower <b>${fmt(lv.lower)}</b> · strike would be mid+$${window.SOFF||1} <b>${fmt(lv.mid+(window.SOFF||1))}</b></div>`;
     return '';
   }
   const cls=t.pnl>=0?'pnl-pos':'pnl-neg', lv=t.levels;
@@ -230,6 +230,7 @@ function card(t){
 
 function render(s){
   window.PROX=s.proximity;
+  window.SOFF=s.strike_offset;
   AUTO=s.auto_trade;
   document.getElementById('modeBadge').textContent=s.mode;
   document.getElementById('modeBadge').className='badge '+(s.mode==='live'?'live':'mock');

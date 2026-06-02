@@ -32,7 +32,8 @@ A "buy the dip at structural support, ride to resistance" long-call strategy.
 1. MM **stance ∈ {long, cautious-long}** → entry approval.
 2. **Bull control**: puts-below-spot **>** calls-≥-spot (MM flow confirmation).
 3. 1-minute **close within $1 of the Lower level**.
-   → **BUY_TO_OPEN** a 0DTE **call** struck at the **Mid** level.
+   → **BUY_TO_OPEN** a 0DTE **call** struck **$1 above the Mid** level
+   (`STRIKE_OFFSET`, default 1.0; QQQ 738.18 → strike 739).
 
 **Exit** (`OPEN → flat`):
 - **Mid take-profit** — stance downgrades to **cautious-long** *and* price within $1 of **Mid**.

@@ -13,7 +13,8 @@ Entry  (FLAT/ARMED -> OPEN)
     status in {LONG, CAUTIOUS_LONG}                     (approval)
     AND bull_control (puts below spot > calls >= spot)  (flow confirmation)
     AND |minute_close - lower| <= PROXIMITY             (1-min trigger)
-        -> BUY_TO_OPEN 0DTE call, strike = nearest to MID level.
+        -> BUY_TO_OPEN 0DTE call, strike = nearest to (MID + STRIKE_OFFSET),
+           i.e. $1 above the mid level by default.
 
 Exit  (OPEN -> flat)
     a) status downgrades to CAUTIOUS_LONG (from LONG) and |price - mid| <= $1
@@ -196,11 +197,11 @@ class Engine:
         st.prev_status = mm.status
 
     # --- order actions -------------------------------------------------------
-    def _pick_call(self, ticker: str, mid: float) -> Optional[OptionContract]:
-        chain = self.providers.market.get_0dte_calls(ticker, near_strike=mid)
+    def _pick_call(self, ticker: str, target_strike: float) -> Optional[OptionContract]:
+        chain = self.providers.market.get_0dte_calls(ticker, near_strike=target_strike)
         if not chain:
             return None
-        return min(chain, key=lambda c: abs(c.strike - mid))
+        return min(chain, key=lambda c: abs(c.strike - target_strike))
 
     def _enter(self, st: TickerState) -> None:
         lv, mm = st.levels, st.mm
@@ -208,7 +209,8 @@ class Engine:
             st.log_event(f"ENTRY signal at lower {lv.lower:.2f} (auto-trade OFF — not sent)")
             st.state = PositionState.ARMED
             return
-        contract = self._pick_call(st.ticker, lv.mid)
+        target_strike = lv.mid + settings.strike_offset
+        contract = self._pick_call(st.ticker, target_strike)
         if not contract:
             st.log_event("ENTRY blocked — no 0DTE call chain available")
             st.state = PositionState.ARMED
@@ -233,7 +235,8 @@ class Engine:
         st.state = PositionState.OPEN
         st.saw_long_in_trade = mm.status is MMStatus.LONG
         st.log_event(f"ENTRY {settings.contracts}x {contract.symbol} @ {fill.price:.2f} "
-                     f"(strike {contract.strike:g} = mid; trigger near lower {lv.lower:.2f})")
+                     f"(strike {contract.strike:g} = mid {lv.mid:.2f}+${settings.strike_offset:g}; "
+                     f"trigger near lower {lv.lower:.2f})")
         self.trades.append(TradeRecord(
             ts=time.time(), ticker=st.ticker, action="ENTRY", reason="lower-level trigger + bull control",
             underlying=st.quote.last, contract_symbol=contract.symbol, strike=contract.strike,
@@ -290,6 +293,7 @@ class Engine:
                 "auto_trade": self.auto_trade,
                 "contracts": settings.contracts,
                 "proximity": settings.proximity,
+                "strike_offset": settings.strike_offset,
                 "tickers": tickers,
                 "trades": self.trades.recent(40),
                 "summary": self.trades.summary(),

@@ -52,6 +52,7 @@ def make_engine(p):
     settings.tickers = ["QQQ"]
     settings.proximity = 1.0
     settings.contracts = 1
+    settings.strike_offset = 1.0
     # Re-poll every tick so scripted state changes are picked up immediately.
     settings.levels_poll_seconds = 0
     settings.mm_poll_seconds = 0
@@ -81,8 +82,8 @@ def test_entry_triggers_at_lower_with_bull_control():
     p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4  # within $1 of lower 525
     eng = make_engine(p); eng._tick()
     assert st(eng).state is PositionState.OPEN
-    assert st(eng).position.strike == 532.0  # strike == mid
-    assert ("BUY", "QQQ_C532", 1) in p.orders
+    assert st(eng).position.strike == 533.0  # strike == mid (532) + $1 offset
+    assert ("BUY", "QQQ_C533", 1) in p.orders
 
 
 def test_no_entry_without_bull_control():

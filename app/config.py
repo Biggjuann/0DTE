@@ -46,6 +46,8 @@ class Settings:
     dry_run: bool = field(default_factory=lambda: _bool("DRY_RUN", True))
     contracts: int = field(default_factory=lambda: _int("CONTRACTS", 1))
     proximity: float = field(default_factory=lambda: _float("PROXIMITY", 1.0))
+    # 0DTE call strike = mid level + this offset (dollars). Spec: $1 above mid.
+    strike_offset: float = field(default_factory=lambda: _float("STRIKE_OFFSET", 1.0))
 
     quote_poll_seconds: int = field(default_factory=lambda: _int("QUOTE_POLL_SECONDS", 5))
     levels_poll_seconds: int = field(default_factory=lambda: _int("LEVELS_POLL_SECONDS", 60))
