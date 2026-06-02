@@ -134,7 +134,11 @@
   <div class="summary" id="summary"></div>
   <div class="grid" id="cards"></div>
   <div class="tlog">
-    <h3>Trade Log</h3>
+    <h3 style="display:flex;align-items:center;gap:12px">Trade Log
+      <span class="spacer" style="flex:1"></span>
+      <span id="exitTypes" class="muted" style="font-size:11px;letter-spacing:0;text-transform:none"></span>
+      <a class="btn" href="/api/trades.csv" download style="text-decoration:none">⬇ Download CSV</a>
+    </h3>
     <table>
       <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Contract</th><th>Strike</th>
         <th>Qty</th><th>Price</th><th>P&amp;L</th><th>Reason</th></tr></thead>
@@ -252,6 +256,12 @@ function render(s){
     stat("Closed Trades",sm.closed_trades)+
     stat("Open Positions",openCount,openCount?'pnl-pos':'');
 
+  const et=sm.exit_types||{};
+  const etStr=Object.keys(et).map(k=>`${k}×${et[k]}`).join('  ');
+  document.getElementById('exitTypes').textContent=
+    (etStr?etStr+'   ·   ':'')+
+    `avg win ${money(sm.avg_win)} / loss ${money(sm.avg_loss)}   ·   hold ${sm.avg_hold_min||0}m`;
+
   document.getElementById('cards').innerHTML=s.tickers.map(card).join('');
 
   const tb=document.getElementById('tlog');
@@ -263,7 +273,7 @@ function render(s){
       <td class="tag-${t.action.toLowerCase()}">${t.action}</td>
       <td class="mono">${t.contract_symbol}</td><td class="mono">${fmt(t.strike)}</td>
       <td class="mono">${t.qty}</td><td class="mono">${fmt(t.price)}</td><td>${pnl}</td>
-      <td class="muted">${t.reason}${t.dry_run?' <span class="mini">DRY</span>':''}</td></tr>`;
+      <td class="muted">${t.exit_type?`<b style="color:var(--txt)">${t.exit_type}</b> · `:''}${t.reason}${t.mfe!=null?` <span class="muted">[mfe ${money(t.mfe)} / mae ${money(t.mae)}${t.hold_seconds!=null?', '+(t.hold_seconds/60).toFixed(1)+'m':''}]</span>`:''}${t.dry_run?' <span class="mini">DRY</span>':''}</td></tr>`;
   }).join('');
 }
 

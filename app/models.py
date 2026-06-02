@@ -129,6 +129,35 @@ class Position:
     entry_underlying: float
     current_price: float = 0.0   # current per-contract premium
     last_underlying: float = 0.0
+    # Entry context (for review/analytics).
+    entry_lower: Optional[float] = None
+    entry_mid: Optional[float] = None
+    entry_top: Optional[float] = None
+    entry_stance: Optional[str] = None
+    entry_bull_control: Optional[bool] = None
+    # Excursions since entry (premium, per contract).
+    max_premium: float = 0.0
+    min_premium: float = 0.0
+    max_underlying: float = 0.0
+    min_underlying: float = 0.0
+
+    def update_excursions(self) -> None:
+        self.max_premium = max(self.max_premium, self.current_price)
+        self.min_premium = min(self.min_premium, self.current_price) if self.min_premium else self.current_price
+        if self.last_underlying:
+            self.max_underlying = max(self.max_underlying, self.last_underlying)
+            self.min_underlying = (min(self.min_underlying, self.last_underlying)
+                                   if self.min_underlying else self.last_underlying)
+
+    @property
+    def mfe(self) -> float:
+        """Max favorable excursion in dollars (best unrealised P&L seen)."""
+        return round((self.max_premium - self.entry_price) * 100 * self.qty, 2)
+
+    @property
+    def mae(self) -> float:
+        """Max adverse excursion in dollars (worst unrealised P&L seen)."""
+        return round((self.min_premium - self.entry_price) * 100 * self.qty, 2)
 
     @property
     def pnl(self) -> float:
@@ -154,6 +183,28 @@ class TradeRecord:
     price: float                 # premium
     pnl: Optional[float] = None
     dry_run: bool = True
+    # Context / analytics (EXIT records carry the full round-trip).
+    stance: Optional[str] = None         # MM stance at this event
+    bull_control: Optional[bool] = None
+    lower: Optional[float] = None
+    mid: Optional[float] = None
+    top: Optional[float] = None
+    exit_type: Optional[str] = None      # TOP / MID / STOP / PROTECTIVE / KILL
+    entry_price: Optional[float] = None
+    entry_underlying: Optional[float] = None
+    entry_stance: Optional[str] = None
+    hold_seconds: Optional[float] = None
+    mae: Optional[float] = None          # max adverse excursion ($)
+    mfe: Optional[float] = None          # max favorable excursion ($)
+
+
+# Stable column order for CSV export.
+TRADE_CSV_FIELDS = [
+    "ts", "datetime", "ticker", "action", "exit_type", "reason",
+    "underlying", "contract_symbol", "strike", "qty", "price", "pnl",
+    "stance", "entry_stance", "bull_control", "lower", "mid", "top",
+    "entry_price", "entry_underlying", "hold_seconds", "mae", "mfe", "dry_run",
+]
 
 
 def to_jsonable(obj):

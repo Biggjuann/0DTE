@@ -5,7 +5,7 @@ import logging
 import os
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -38,6 +38,20 @@ def index() -> FileResponse:
 @app.get("/api/state")
 def state() -> JSONResponse:
     return JSONResponse(engine.snapshot())
+
+
+@app.get("/api/trades.json")
+def trades_json() -> JSONResponse:
+    return JSONResponse({"trades": engine.trades.all(), "summary": engine.trades.summary()})
+
+
+@app.get("/api/trades.csv")
+def trades_csv() -> Response:
+    return Response(
+        content=engine.trades.to_csv(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=0dte_trades.csv"},
+    )
 
 
 @app.get("/api/config")

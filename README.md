@@ -125,8 +125,24 @@ Already configured (`railway.json` + `Procfile`, binds `0.0.0.0:$PORT`):
    `SCHWAB_ACCOUNT_HASH=…` (for live orders), optional `TICKERS`, `CONTRACTS`,
    `PROXIMITY`.
 3. Healthcheck is `/api/config`. The dashboard is the public domain root `/`.
-4. Trade log is on the container FS (ephemeral) — attach a Railway **Volume**
-   at `/app/data` if you want persistence across redeploys.
+4. **Persist the trade log**: attach a Railway **Volume** (e.g. mount at `/data`)
+   and set `TRADE_LOG_PATH=/data/trades.json` so it survives redeploys.
+
+## Trade log & review
+
+Every entry/exit is logged with full context for offline review: entry levels
+(lower/mid/top), MM stance at entry & exit, bull-control flag, hold time,
+**MAE/MFE** (worst/best excursion), exit type (TOP / MID / STOP / PROTECTIVE /
+KILL) and P&L.
+
+- Dashboard trade log shows exit type, `[mfe/mae, hold]`, and an exit-type
+  breakdown + avg win/loss/hold.
+- **Export**: `GET /api/trades.csv` (download button on the dashboard) and
+  `GET /api/trades.json`.
+
+The strategy is **rule-based, not self-learning** — review the exported log
+(share the CSV) and we tune the rules deliberately rather than auto-fitting a
+live-money account.
 
 ## Safety
 

@@ -74,6 +74,10 @@ class Settings:
     market_data_provider: str = field(default_factory=lambda: os.getenv("MARKET_DATA_PROVIDER", "schwab").lower())
     options_provider: str = field(default_factory=lambda: os.getenv("OPTIONS_PROVIDER", "schwab").lower())
 
+    # Trade log JSON path. Point this at a mounted Railway Volume (e.g.
+    # /data/trades.json) so the log survives redeploys. Blank -> app/data/trades.json.
+    trade_log_path: str = field(default_factory=lambda: os.getenv("TRADE_LOG_PATH", ""))
+
     host: str = field(default_factory=lambda: os.getenv("HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: _int("PORT", 8080))
 

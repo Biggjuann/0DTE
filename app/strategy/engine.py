@@ -99,7 +99,7 @@ class Engine:
         with self._lock:
             for st in self.states.values():
                 if st.position:
-                    self._exit(st, "KILL SWITCH — flatten all")
+                    self._exit(st, "KILL SWITCH — flatten all", "KILL")
             self.auto_trade = False
         log.warning("KILL SWITCH engaged")
 
@@ -146,6 +146,7 @@ class Engine:
             st.position.current_price = c.mid
         if st.quote:
             st.position.last_underlying = st.quote.last
+        st.position.update_excursions()
 
     # --- the state machine ---------------------------------------------------
     def _evaluate(self, st: TickerState) -> None:
@@ -183,24 +184,28 @@ class Engine:
                 st.saw_long_in_trade = True
 
             prox = settings.proximity
-            reason = None
+            reason = exit_type = None
             if not approved:
+                exit_type = "PROTECTIVE"
                 reason = f"MM status '{mm.status.value}' lost long approval — protective exit"
             elif price_close < lv.lower:
                 # Stop: 1-minute close below the lower (put-wall) level.
+                exit_type = "STOP"
                 reason = (f"STOP — 1-min close {price_close:.2f} below LOWER {lv.lower:.2f}")
             elif mm.status is MMStatus.CAUTIOUS_LONG and price >= lv.mid - prox:
                 # Take profit at mid on a long->cautious downgrade (reached the
                 # mid zone or beyond; robust to overshoot between polls).
+                exit_type = "MID"
                 reason = (f"Downgraded to cautious-long at/above MID {lv.mid:.2f} "
                           f"(within ${prox:g}) — take profit at mid")
             elif mm.status is MMStatus.LONG and price >= lv.top - prox:
                 # Held LONG into the top (call-wall) zone -> take profit at top.
+                exit_type = "TOP"
                 reason = (f"Held LONG into TOP {lv.top:.2f} (within ${prox:g}) "
                           f"— take profit at top call wall")
 
             if reason:
-                self._exit(st, reason)
+                self._exit(st, reason, exit_type)
 
         st.prev_status = mm.status
 
@@ -239,6 +244,10 @@ class Engine:
             entry_underlying=st.quote.last,
             current_price=fill.price,
             last_underlying=st.quote.last,
+            entry_lower=lv.lower, entry_mid=lv.mid, entry_top=lv.top,
+            entry_stance=mm.status.value, entry_bull_control=mm.bull_control,
+            max_premium=fill.price, min_premium=fill.price,
+            max_underlying=st.quote.last, min_underlying=st.quote.last,
         )
         st.state = PositionState.OPEN
         st.saw_long_in_trade = mm.status is MMStatus.LONG
@@ -249,9 +258,11 @@ class Engine:
             ts=time.time(), ticker=st.ticker, action="ENTRY", reason="lower-level trigger + bull control",
             underlying=st.quote.last, contract_symbol=contract.symbol, strike=contract.strike,
             qty=settings.contracts, price=fill.price, dry_run=settings.dry_run,
+            stance=mm.status.value, bull_control=mm.bull_control,
+            lower=lv.lower, mid=lv.mid, top=lv.top,
         ))
 
-    def _exit(self, st: TickerState, reason: str) -> None:
+    def _exit(self, st: TickerState, reason: str, exit_type: Optional[str] = None) -> None:
         pos = st.position
         if not pos:
             return
@@ -264,12 +275,19 @@ class Engine:
             st.log_event(f"EXIT rejected by broker: {fill.message}")
             return
         pnl = round((fill.price - pos.entry_price) * 100 * pos.qty, 2)
+        underlying = st.quote.last if st.quote else pos.last_underlying
         st.log_event(f"EXIT {pos.contract_symbol} @ {fill.price:.2f}  P&L ${pnl:+.2f} — {reason}")
         self.trades.append(TradeRecord(
-            ts=time.time(), ticker=st.ticker, action="EXIT", reason=reason,
-            underlying=st.quote.last if st.quote else pos.last_underlying,
-            contract_symbol=pos.contract_symbol, strike=pos.strike, qty=pos.qty,
+            ts=time.time(), ticker=st.ticker, action="EXIT", reason=reason, exit_type=exit_type,
+            underlying=underlying, contract_symbol=pos.contract_symbol, strike=pos.strike, qty=pos.qty,
             price=fill.price, pnl=pnl, dry_run=settings.dry_run,
+            stance=st.mm.status.value if st.mm else None,
+            bull_control=st.mm.bull_control if st.mm else None,
+            lower=pos.entry_lower, mid=pos.entry_mid, top=pos.entry_top,
+            entry_price=pos.entry_price, entry_underlying=pos.entry_underlying,
+            entry_stance=pos.entry_stance,
+            hold_seconds=round(time.time() - pos.entry_time, 1),
+            mae=pos.mae, mfe=pos.mfe,
         ))
         st.position = None
         st.saw_long_in_trade = False
