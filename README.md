@@ -16,11 +16,13 @@ Derived from Gammagamma's `/api/levels/{symbol}?expiry=weekly`:
 
 | Level | Definition | Source field |
 |---|---|---|
-| **Lower** | lowest put wall on the weekly | `min(major_put_walls)` |
+| **Lower** | dominant put wall by **GEX** on the weekly | `put_wall` (= `major_put_walls[0]`) |
 | **Mid** | gamma-weighted magnet | `gvwap` (fallback `gamma_flip`) |
-| **Top** | largest call strike on the weekly | `max(major_call_walls)` |
+| **Top** | dominant call wall by **GEX** on the weekly | `call_wall` (= `major_call_walls[0]`) |
 
-> Example (QQQ weekly): lower **710**, mid **738.18** (GVWAP), top **742** — matches the Gammagamma dashboard.
+> Levels are the **highest-|GEX|** walls, not the extreme strikes. Example (QQQ
+> weekly): lower **735** (−$47.6M put GEX), mid **738.18** (GVWAP), top **742**
+> (+$297.7M call GEX) — matches the Gammagamma dashboard.
 
 ## Strategy logic
 

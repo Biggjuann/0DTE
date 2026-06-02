@@ -11,9 +11,13 @@ Verified contract (https://gammagamma-production.up.railway.app):
     }
 
 Level derivation (per the strategy spec):
-    lower = lowest put wall on the weekly   -> min(major_put_walls)  (fallback put_wall)
-    top   = largest call strike on the weekly-> max(major_call_walls) (fallback call_wall)
+    lower = dominant put wall by GEX on the weekly  -> put_wall  (== major_put_walls[0])
+    top   = dominant call wall by GEX on the weekly -> call_wall (== major_call_walls[0])
     mid   = gvwap (preferred) else gamma_flip
+
+The scalar put_wall/call_wall fields are the highest-|GEX| walls (the arrays
+are GEX-ranked, largest first), e.g. QQQ weekly put_wall = 735 (-$47.6M GEX),
+NOT the lowest strike 710.
 
 Weekly data can be empty intraday/after-hours; we then fall back to the
 default (all-expiry) snapshot so the system still has levels to work with.
@@ -94,32 +98,36 @@ class GammaGammaProvider:
         gamma_flip = _num(data.get("gamma_flip"))
         spot = _num(data.get("spot"))
 
+        # The dominant wall = the strike with the highest GEX magnitude.
+        # Gammagamma's scalar `call_wall` / `put_wall` IS that dominant wall,
+        # and equals major_*_walls[0] (the arrays are GEX-ranked, largest
+        # first). For QQQ weekly the dominant put wall is 735 (not the lowest
+        # strike 710). We fall back to the array head, then to the extreme.
         call_walls = _strikes(data.get("major_call_walls"))
         put_walls = _strikes(data.get("major_put_walls"))
         cw = _num(data.get("call_wall"))
         pw = _num(data.get("put_wall"))
-        if cw is not None:
-            call_walls.append(cw)
-        if pw is not None:
-            put_walls.append(pw)
 
-        highest_call = max(call_walls) if call_walls else cw
-        lowest_put = min(put_walls) if put_walls else pw
+        # top = dominant call wall by GEX
+        top_call = cw if cw is not None else (call_walls[0] if call_walls else None)
+        # lower = dominant put wall by GEX (highest put |GEX|)
+        bot_put = pw if pw is not None else (put_walls[0] if put_walls else None)
+
         mid = gvwap if gvwap is not None else gamma_flip
 
-        if lowest_put is None or highest_call is None or mid is None:
+        if bot_put is None or top_call is None or mid is None:
             log.warning("Gammagamma %s: incomplete levels", ticker)
             return None
 
         return Levels(
             ticker=ticker,
-            lower=lowest_put,
+            lower=bot_put,
             mid=mid,
-            top=highest_call,
+            top=top_call,
             gvwap=gvwap,
             gamma_flip=gamma_flip,
-            lowest_put=lowest_put,
-            highest_call=highest_call,
+            lowest_put=bot_put,      # dominant put wall by GEX
+            highest_call=top_call,   # dominant call wall by GEX
             spot=spot,
             expiry=str(data.get("expiry_filter", self.expiry)),
         )
