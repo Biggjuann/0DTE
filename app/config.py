@@ -48,6 +48,9 @@ class Settings:
     proximity: float = field(default_factory=lambda: _float("PROXIMITY", 1.0))
     # 0DTE call strike = mid level + this offset (dollars). Spec: $1 above mid.
     strike_offset: float = field(default_factory=lambda: _float("STRIKE_OFFSET", 1.0))
+    # Minimum separation (dollars) required between lower->mid and mid->top for a
+    # channel to be considered tradeable. Below this we stand aside (too tight).
+    min_channel_gap: float = field(default_factory=lambda: _float("MIN_CHANNEL_GAP", 1.0))
 
     quote_poll_seconds: int = field(default_factory=lambda: _int("QUOTE_POLL_SECONDS", 5))
     levels_poll_seconds: int = field(default_factory=lambda: _int("LEVELS_POLL_SECONDS", 60))

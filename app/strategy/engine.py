@@ -166,9 +166,10 @@ class Engine:
         # A tradeable channel needs the three levels to be properly ordered with
         # at least $1 of separation; otherwise (e.g. put wall == gvwap at the
         # open) entry and exit zones overlap and we must stand aside.
+        gap = settings.min_channel_gap
         valid_channel = (lv.lower < lv.mid < lv.top
-                         and (lv.mid - lv.lower) >= prox
-                         and (lv.top - lv.mid) >= prox)
+                         and (lv.mid - lv.lower) >= gap
+                         and (lv.top - lv.mid) >= gap)
 
         if st.position is None:
             # Re-arm latch: once price leaves the put-wall band (upward) we are

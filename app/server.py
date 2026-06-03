@@ -60,6 +60,7 @@ def config() -> dict:
         "mode": settings.data_mode, "dry_run": settings.dry_run,
         "tickers": settings.tickers, "contracts": settings.contracts,
         "proximity": settings.proximity,
+        "gamma_expiry": settings.gamma_expiry,
         "gamma_base_url": settings.gamma_base_url, "mm_base_url": settings.mm_base_url,
     }
 
