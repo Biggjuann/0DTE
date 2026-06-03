@@ -105,12 +105,32 @@ def test_no_entry_when_price_above_putwall_band():
     assert st(eng).position is None
 
 
-def test_no_entry_on_degenerate_channel():
+def test_enters_on_tight_channel_when_ordered():
+    # Tight but properly-ordered channel (mid just above put wall) should still
+    # enter on cautious-long and NOT instantly exit (no downgrade yet).
+    p = ScriptProvider(); p.status = MMStatus.CAUTIOUS_LONG; p.price = 745.2
+    p.levels.lower = 745.0; p.levels.mid = 745.34; p.levels.top = 750.0
+    eng = make_engine(p); eng._tick(); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    assert st(eng).position is not None
+
+
+def test_no_entry_on_inverted_channel():
     p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
-    p.levels.mid = 525.04; p.levels.top = 525.5  # put wall ~ gvwap, no real channel
+    p.levels.top = 520.0  # top below mid -> inverted, untradeable
     eng = make_engine(p); eng._tick()
     assert st(eng).state is PositionState.DISABLED
     assert st(eng).position is None
+
+
+def test_no_mid_exit_when_entered_cautious_no_downgrade():
+    # Entered on cautious-long (never long): mid exit must NOT fire even at mid.
+    p = ScriptProvider(); p.status = MMStatus.CAUTIOUS_LONG; p.price = 525.2
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    p.price = 531.8  # at/above mid (532) while still cautious, no downgrade
+    eng._tick()
+    assert st(eng).position is not None, "no downgrade from long -> must hold"
 
 
 def test_no_reentry_churn_same_touch():

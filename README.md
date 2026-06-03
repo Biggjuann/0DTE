@@ -28,20 +28,19 @@ Derived from Gammagamma's `/api/levels/{symbol}?expiry=weekly`:
 
 A "buy the dip at structural support, ride to resistance" long-call strategy.
 
-**Entry** (`FLAT/ARMED → OPEN`) — all three required:
+**Entry** (`FLAT/ARMED → OPEN`) — the only conditions for a long:
 1. MM **stance ∈ {long, cautious-long}** → entry approval.
-2. **Bull control**: puts-below-spot **>** calls-≥-spot (MM flow confirmation).
-3. 1-minute **close within $1 of the Lower level**.
-   → **BUY_TO_OPEN** a 0DTE **call** struck **$1 above the Mid** level
-   (`STRIKE_OFFSET`, default 1.0; QQQ 738.18 → strike 739).
+2. **Live price at/just above the put wall**: `lower ≤ price ≤ lower + PROXIMITY`.
+   (Channel must be ordered `lower < mid < top`; one entry per put-wall touch.)
+   → **BUY_TO_OPEN** a 0DTE call struck at the **closest listed strike to mid + `STRIKE_OFFSET`** (default +$1).
 
 **Exit** (`OPEN → flat`, in priority order):
 - **Protective** — stance loses long approval entirely (neutral/short) → flatten.
-- **Stop** — 1-minute **close below the Lower level** → flatten.
-- **Mid take-profit** — stance downgrades to **cautious-long** and price reaches the **Mid** zone (≥ mid − $1).
-- **Top take-profit** — stance **stays long** and price reaches the **Top** zone (≥ top − $1, i.e. when the top call-wall label starts flashing).
+- **Stop** — price **below the put wall (lower)** → flatten.
+- **Mid take-profit** — stance **downgrades long → cautious-long** during the trade *and* price reaches the **Mid** zone (≥ mid − PROXIMITY). Entering on cautious-long does **not** immediately exit.
+- **Top take-profit** — price reaches the **Top** zone (≥ top − PROXIMITY) while still approved (long or cautious-long).
 
-Take-profits use a *reached-or-beyond* band so a fast 0DTE move that overshoots a level between quote polls still closes the trade.
+Take-profits use a reached-or-beyond band so a fast 0DTE move that overshoots a level between quote polls still closes the trade.
 
 The `$1` band, contract count, tickers and poll cadences are all configurable.
 

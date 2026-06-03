@@ -3,27 +3,26 @@
 Per-ticker state machine
 =========================
 
-    DISABLED  MM status is not long / cautious-long -> no approval.
-    ARMED     Approved (long or cautious-long) + bull-control flow, waiting
-              for price to close within $1 of the LOWER level (lowest put wall)
-              on the 1-minute chart.
-    OPEN      Holding a long 0DTE call struck at the MID level.
+    DISABLED  MM status is not long / cautious-long (or levels inverted).
+    ARMED     Approved (long or cautious-long), waiting for price to reach the
+              put wall (lower level).
+    OPEN      Holding a long 0DTE call struck at (MID + STRIKE_OFFSET).
 
 Entry  (FLAT/ARMED -> OPEN) — the ONLY conditions for a long:
-    status in {LONG, CAUTIOUS_LONG}              (approval)
-    AND |live price - lower| <= PROXIMITY        (within $1 of the put wall)
-    plus guards: valid channel (lower<mid<top, $1 gaps), price below the mid
-    take-profit zone, and a one-entry-per-touch re-arm latch.
-        -> BUY_TO_OPEN 0DTE call, strike = nearest to (MID + STRIKE_OFFSET).
+    status in {LONG, CAUTIOUS_LONG}                 (approval)
+    AND lower <= live price <= lower + PROXIMITY     (at/just above the put wall)
+    plus: valid channel (lower < mid < top) and a one-entry-per-touch latch.
+        -> BUY_TO_OPEN 0DTE call, strike = closest listed to (MID + STRIKE_OFFSET).
 
 Exit  (OPEN -> flat), checked in priority order
     a) status loses long approval entirely (neutral/short) -> protective exit.
-    b) 1-minute CLOSE below the LOWER level                -> STOP.
-    c) status is CAUTIOUS_LONG and price >= mid - $1        -> take profit at MID.
-    d) status stays LONG and price >= top - $1 (top wall    -> take profit at TOP.
-       label "flashing")
+    b) price below the put wall (lower)                    -> STOP.
+    c) status DOWNGRADES long -> cautious-long during the trade and
+       price >= mid - PROXIMITY                            -> take profit at MID.
+    d) price >= top - PROXIMITY while still approved        -> take profit at TOP.
 Take-profits use a reached-or-beyond band so a fast 0DTE move that overshoots
-the level between quote polls still closes the trade.
+the level between quote polls still closes the trade. The MID exit needs a real
+downgrade, so entering on cautious-long does not immediately exit.
 """
 from __future__ import annotations
 
@@ -163,9 +162,8 @@ class Engine:
         approved = mm.status.approves_entry
         price = q.last
         prox = settings.proximity
-        # A tradeable channel needs the three levels to be properly ordered with
-        # at least $1 of separation; otherwise (e.g. put wall == gvwap at the
-        # open) entry and exit zones overlap and we must stand aside.
+        # The channel must be properly ordered (lower < mid < top). MIN_CHANNEL_GAP
+        # (default 0) can additionally require separation between the legs.
         gap = settings.min_channel_gap
         valid_channel = (lv.lower < lv.mid < lv.top
                          and (lv.mid - lv.lower) >= gap
@@ -184,31 +182,29 @@ class Engine:
                     st.log_event(msg)
                 st.state = PositionState.DISABLED
             elif not valid_channel:
-                msg = (f"levels too tight/inverted (lower {lv.lower:.2f} / "
+                msg = (f"levels inverted (lower {lv.lower:.2f} / "
                        f"mid {lv.mid:.2f} / top {lv.top:.2f}) — standing aside")
                 if st.last_event != msg:
                     st.log_event(msg)
                 st.state = PositionState.DISABLED
             else:
-                # THE entry rule: live price within $1 of the put wall (lower)
-                # AND stance is long or cautious-long. Plus room below the mid
-                # take-profit so we don't enter straight into an exit.
-                at_putwall = abs(price - lv.lower) <= prox
-                room_to_mid = price < lv.mid - prox
-                if at_putwall and room_to_mid and st.can_enter:
+                # THE entry rule: live price at/within $PROX above the put wall
+                # (lower) AND stance is long or cautious-long. We require price at
+                # or above the wall so we don't enter into an immediate stop.
+                at_putwall = lv.lower <= price <= lv.lower + prox
+                if at_putwall and st.can_enter:
                     self._enter(st)
                     st.can_enter = False
                 else:
                     if st.state != PositionState.ARMED:
-                        why = []
-                        if not at_putwall:
-                            why.append(f"price {price:.2f} not within ${prox:g} of "
-                                       f"put wall {lv.lower:.2f}")
-                        elif not room_to_mid:
-                            why.append(f"price {price:.2f} too close to mid {lv.mid:.2f}")
-                        elif not st.can_enter:
-                            why.append("awaiting price to leave & re-touch put wall")
-                        st.log_event(f"ARMED ({mm.status.value}); waiting — {', '.join(why)}")
+                        if price < lv.lower:
+                            why = f"price {price:.2f} below put wall {lv.lower:.2f}"
+                        elif not at_putwall:
+                            why = (f"price {price:.2f} not within ${prox:g} above "
+                                   f"put wall {lv.lower:.2f}")
+                        else:
+                            why = "awaiting price to leave & re-touch put wall"
+                        st.log_event(f"ARMED ({mm.status.value}); waiting — {why}")
                     st.state = PositionState.ARMED
         else:
             self._mark_position(st)
@@ -223,16 +219,18 @@ class Engine:
                 # Stop: price broke below the put-wall (lower) level.
                 exit_type = "STOP"
                 reason = (f"STOP — price {price:.2f} below put wall {lv.lower:.2f}")
-            elif mm.status is MMStatus.CAUTIOUS_LONG and price >= lv.mid - prox:
-                # Take profit at mid on a long->cautious downgrade (reached the
-                # mid zone or beyond; robust to overshoot between polls).
+            elif (mm.status is MMStatus.CAUTIOUS_LONG and st.saw_long_in_trade
+                  and price >= lv.mid - prox):
+                # Mid take-profit ONLY on a genuine long -> cautious-long
+                # DOWNGRADE during the trade (not when we entered on cautious).
                 exit_type = "MID"
-                reason = (f"Downgraded to cautious-long at/above MID {lv.mid:.2f} "
-                          f"(within ${prox:g}) — take profit at mid")
-            elif mm.status is MMStatus.LONG and price >= lv.top - prox:
-                # Held LONG into the top (call-wall) zone -> take profit at top.
+                reason = (f"Downgraded from long to cautious-long at/above MID "
+                          f"{lv.mid:.2f} (within ${prox:g}) — take profit at mid")
+            elif price >= lv.top - prox:
+                # Reached the top (call-wall) zone while still approved (long or
+                # cautious-long) -> take profit at the ceiling.
                 exit_type = "TOP"
-                reason = (f"Held LONG into TOP {lv.top:.2f} (within ${prox:g}) "
+                reason = (f"Reached TOP {lv.top:.2f} (within ${prox:g}) "
                           f"— take profit at top call wall")
 
             if reason:
