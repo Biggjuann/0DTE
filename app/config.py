@@ -58,7 +58,7 @@ class Settings:
 
     gamma_base_url: str = field(default_factory=lambda: os.getenv("GAMMA_BASE_URL", "https://gammagamma-production.up.railway.app"))
     gamma_api_key: str = field(default_factory=lambda: os.getenv("GAMMA_API_KEY", ""))
-    gamma_expiry: str = field(default_factory=lambda: os.getenv("GAMMA_EXPIRY", "weekly"))
+    gamma_expiry: str = field(default_factory=lambda: os.getenv("GAMMA_EXPIRY", "weekly,0dte"))
 
     schwab_base_url: str = field(default_factory=lambda: os.getenv("SCHWAB_BASE_URL", "https://api.schwabapi.com"))
     schwab_account_hash: str = field(default_factory=lambda: os.getenv("SCHWAB_ACCOUNT_HASH", ""))
