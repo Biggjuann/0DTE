@@ -23,5 +23,30 @@
     "hold_seconds": null,
     "mae": null,
     "mfe": null
+  },
+  {
+    "ts": 1780510849.566614,
+    "ticker": "QQQ",
+    "action": "ENTRY",
+    "reason": "price within $1 of put wall + long",
+    "underlying": 525.67,
+    "contract_symbol": "QQQ_0DTE_C533",
+    "strike": 533.0,
+    "qty": 1,
+    "price": 1.3,
+    "pnl": null,
+    "dry_run": true,
+    "stance": "long",
+    "bull_control": true,
+    "lower": 525.0,
+    "mid": 532.0,
+    "top": 540.0,
+    "exit_type": null,
+    "entry_price": null,
+    "entry_underlying": null,
+    "entry_stance": null,
+    "hold_seconds": null,
+    "mae": null,
+    "mfe": null
   }
 ]

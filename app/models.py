@@ -171,6 +171,72 @@ class Position:
 
 
 @dataclass
+class PivotLevels:
+    """Person's pivots from the prior session's OHLC (higher timeframe = daily)."""
+
+    ticker: str
+    pp: float
+    r1: float
+    r2: float
+    r3: float
+    s1: float
+    s2: float
+    s3: float
+    prior_high: Optional[float] = None
+    prior_low: Optional[float] = None
+    prior_close: Optional[float] = None
+    spot: Optional[float] = None
+    asof: float = field(default_factory=time.time)
+
+    @staticmethod
+    def from_ohlc(ticker: str, high: float, low: float, close: float,
+                  spot: Optional[float] = None) -> "PivotLevels":
+        pp = (high + low + close) / 3.0
+        r1 = 2 * pp - low
+        r2 = pp + high - low
+        r3 = r2 + high - low
+        s1 = 2 * pp - high
+        s2 = pp - high + low
+        s3 = s2 - high + low
+        return PivotLevels(ticker=ticker, pp=round(pp, 2), r1=round(r1, 2), r2=round(r2, 2),
+                           r3=round(r3, 2), s1=round(s1, 2), s2=round(s2, 2), s3=round(s3, 2),
+                           prior_high=high, prior_low=low, prior_close=close, spot=spot)
+
+
+@dataclass
+class PivotPosition:
+    """A pivot trade that scales out 50% at the pivot and runs the rest."""
+
+    ticker: str
+    direction: str               # LONG / SHORT
+    option_type: str             # CALL / PUT
+    contract_symbol: str
+    strike: float
+    expiry: str
+    qty: int                     # initial lot
+    remaining_qty: int
+    entry_price: float           # premium paid
+    entry_time: float
+    entry_underlying: float
+    pp: float
+    target: float                # S1 (short) or R1 (long)
+    current_price: float = 0.0
+    last_underlying: float = 0.0
+    scaled: bool = False         # 50% taken at the pivot
+    breakeven: bool = False      # stop moved to breakeven
+    stop_premium: float = 0.0    # premium stop level
+    realized_pnl: float = 0.0    # locked in from the scale-out
+
+    @property
+    def open_pnl(self) -> float:
+        return round((self.current_price - self.entry_price) * 100 * self.remaining_qty, 2)
+
+    @property
+    def total_pnl(self) -> float:
+        return round(self.realized_pnl + self.open_pnl, 2)
+
+
+@dataclass
 class TradeRecord:
     ts: float
     ticker: str

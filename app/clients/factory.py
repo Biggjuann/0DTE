@@ -24,6 +24,15 @@ class Providers:
     mode: str
 
 
+@dataclass
+class PivotProviders:
+    pivots: object        # PivotsProvider
+    market: MarketData    # quotes, chains, prior-day OHLC, VIX
+    broker: Broker
+    vix_symbol: str
+    mode: str
+
+
 def build_providers() -> Providers:
     if settings.live:
         from app.clients.gammagamma import GammaGammaProvider
@@ -64,3 +73,21 @@ def build_providers() -> Providers:
     mock = MockProvider()
     log.info("Providers: MOCK (synthetic feed)")
     return Providers(levels=mock, mm=mock, market=mock, broker=mock, mode="mock")
+
+
+def build_pivot_providers() -> PivotProviders:
+    """Pivot strategy is Schwab-backed (needs daily OHLC + VIX) in live mode."""
+    from app.clients.pivots import PivotsProvider
+    if settings.live:
+        from app.clients.schwab import SchwabClient
+        from app.clients.token import SharedTokenProvider
+        token = SharedTokenProvider()
+        schwab = SchwabClient(token_fn=token.get_token, invalidate_fn=token.invalidate)
+        log.info("Pivot providers: LIVE (Schwab quotes/OHLC/orders, vix=%s, dry_run=%s)",
+                 settings.vix_symbol, settings.dry_run)
+        return PivotProviders(pivots=PivotsProvider(schwab), market=schwab, broker=schwab,
+                              vix_symbol=settings.vix_symbol, mode="live")
+    mock = MockProvider()
+    log.info("Pivot providers: MOCK")
+    return PivotProviders(pivots=PivotsProvider(mock), market=mock, broker=mock,
+                          vix_symbol=settings.vix_symbol, mode="mock")

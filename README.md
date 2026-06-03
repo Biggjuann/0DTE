@@ -44,9 +44,27 @@ Take-profits use a reached-or-beyond band so a fast 0DTE move that overshoots a 
 
 The `$1` band, contract count, tickers and poll cadences are all configurable.
 
+## Strategy 2 — Person's Pivots (second tab)
+
+A VIX-gated mean-reversion strategy on **Person's pivots** (computed from the
+prior session's OHLC: `PP=(H+L+C)/3`, `R1=2PP−L`, `S1=2PP−H`, …).
+
+- **Regime** by VIX vs its own daily pivot: VIX **above** its PP → **bearish**
+  (shorts); VIX **below** → **bullish** (longs).
+- **Short** (bearish): when QQQ/SPY reaches **R1** → **buy 0DTE puts** struck
+  closest to **PP**. **Long** (bullish): when price reaches **S1** → **buy 0DTE
+  calls** struck closest to PP.
+- **Manage**: scale **50%** out at the **pivot (PP)**, move the stop to
+  **breakeven**, run the rest to the opposite level (**S1** for shorts, **R1**
+  for longs). Initial stop = **`PIVOT_STOP_PCT`** of entry premium (default 50%).
+- Pivot data is **Schwab-backed** (daily OHLC + VIX) regardless of
+  `MARKET_DATA_PROVIDER`. Its own trade log (`PIVOT_TRADE_LOG_PATH`),
+  CSV export (`/api/pivot/trades.csv`), and controls (`/api/pivot/control/...`).
+
 ## Dashboard
 
-`GET /` serves a self-contained dark "trader" dashboard (no external CDNs):
+`GET /` serves a self-contained dark "trader" dashboard with **two tabs**
+(Gamma Levels and Person's Pivots), no external CDNs:
 
 - Per-ticker **level ladder** with live price marker and $1 proximity pulse.
 - MM **status banner** + puts/calls **flow bars** with bull-control indicator.

@@ -23,6 +23,10 @@ _BASE: Dict[str, Dict[str, float]] = {
 }
 
 
+def _is_vix(ticker: str) -> bool:
+    return str(ticker).upper().lstrip("$").startswith("VIX")
+
+
 def _anchor(ticker: str) -> Dict[str, float]:
     if ticker in _BASE:
         return _BASE[ticker]
@@ -106,49 +110,71 @@ class MockProvider:
         )
 
     # --- MarketData ----------------------------------------------------------
+    def _vix(self) -> float:
+        # Oscillates around the VIX pivot (20) so the regime flips over time.
+        return round(20 + 4 * math.sin(time.time() / 40.0), 2)
+
     def get_quote(self, ticker: str) -> Optional[Quote]:
+        if _is_vix(ticker):
+            v = self._vix()
+            return Quote(ticker=ticker, last=v, minute_close=v)
         price = self._price(ticker)
         return Quote(ticker=ticker, last=price, minute_close=price)
 
-    def _premium(self, underlying: float, strike: float) -> float:
+    def _premium(self, underlying: float, strike: float, cp: str = "C") -> float:
         # Crude intrinsic + time value so P&L moves with the underlying.
-        intrinsic = max(0.0, underlying - strike)
+        intrinsic = max(0.0, underlying - strike) if cp == "C" else max(0.0, strike - underlying)
         return round(intrinsic + 1.25, 2)
 
-    def get_0dte_calls(self, ticker: str, near_strike: float, width: float = 5.0) -> List[OptionContract]:
+    def _chain(self, ticker: str, near_strike: float, width: float, cp: str) -> List[OptionContract]:
         under = self._price(ticker)
         out: List[OptionContract] = []
         base = round(near_strike)
         for k in range(int(base - width), int(base + width) + 1):
-            prem = self._premium(under, k)
-            out.append(
-                OptionContract(
-                    symbol=f"{ticker}_0DTE_C{k}",
-                    strike=float(k),
-                    expiry="0dte",
-                    bid=round(prem - 0.05, 2),
-                    ask=round(prem + 0.05, 2),
-                    last=prem,
-                )
-            )
+            prem = self._premium(under, k, cp)
+            out.append(OptionContract(symbol=f"{ticker}_0DTE_{cp}{k}", strike=float(k),
+                                      expiry="0dte", bid=round(prem - 0.05, 2),
+                                      ask=round(prem + 0.05, 2), last=prem))
         return out
+
+    def get_0dte_calls(self, ticker: str, near_strike: float, width: float = 5.0) -> List[OptionContract]:
+        return self._chain(ticker, near_strike, width, "C")
+
+    def get_0dte_puts(self, ticker: str, near_strike: float, width: float = 5.0) -> List[OptionContract]:
+        return self._chain(ticker, near_strike, width, "P")
 
     def get_contract(self, symbol: str) -> Optional[OptionContract]:
         try:
             ticker = symbol.split("_")[0]
-            strike = float(symbol.split("C")[-1])
+            cp = "P" if "_0DTE_P" in symbol else "C"
+            strike = float(symbol.split(cp)[-1])
         except Exception:
             return None
         under = self._price(ticker)
-        prem = self._premium(under, strike)
+        prem = self._premium(under, strike, cp)
         return OptionContract(symbol=symbol, strike=strike, expiry="0dte",
                               bid=round(prem - 0.05, 2), ask=round(prem + 0.05, 2), last=prem)
 
+    # --- prior-day OHLC (for pivots) -----------------------------------------
+    def get_prior_day_ohlc(self, ticker: str) -> Optional[dict]:
+        if _is_vix(ticker):
+            return {"high": 22.0, "low": 18.0, "close": 20.0}  # VIX PP = 20
+        a = _anchor(ticker)
+        # Place pivots inside the price sweep: PP~mid, R1 near top, S1 near floor.
+        mid, lo, top = a["mid"], a["lower"], a["top"]
+        high = round(mid + (top - mid) * 0.6, 2)
+        low = round(mid - (mid - lo) * 0.6, 2)
+        close = round(mid + 1, 2)
+        return {"high": high, "low": low, "close": close}
+
     # --- Broker --------------------------------------------------------------
-    def buy_to_open_call(self, contract: OptionContract, qty: int) -> Fill:
+    def buy_to_open(self, contract: OptionContract, qty: int) -> Fill:
         self._orders += 1
         return Fill(True, contract.ask or contract.mid, "mock fill", f"mock-{self._orders}")
 
-    def sell_to_close_call(self, contract: OptionContract, qty: int) -> Fill:
+    def sell_to_close(self, contract: OptionContract, qty: int) -> Fill:
         self._orders += 1
         return Fill(True, contract.bid or contract.mid, "mock fill", f"mock-{self._orders}")
+
+    buy_to_open_call = buy_to_open
+    sell_to_close_call = sell_to_close

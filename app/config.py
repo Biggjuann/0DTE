@@ -82,6 +82,18 @@ class Settings:
     # /data/trades.json) so the log survives redeploys. Blank -> app/data/trades.json.
     trade_log_path: str = field(default_factory=lambda: os.getenv("TRADE_LOG_PATH", ""))
 
+    # ----- Person's Pivots strategy (second tab) -----------------------------
+    pivot_contracts: int = field(default_factory=lambda: _int("PIVOT_CONTRACTS", 4))
+    # Touch band for reaching R1 / S1 / PP / target (dollars).
+    pivot_proximity: float = field(default_factory=lambda: _float("PIVOT_PROXIMITY", 0.5))
+    # Initial stop = this fraction of the entry premium lost (0.5 = 50%).
+    pivot_stop_pct: float = field(default_factory=lambda: _float("PIVOT_STOP_PCT", 0.5))
+    # Fraction of the lot scaled out at the pivot (0.5 = 50%).
+    pivot_scale_pct: float = field(default_factory=lambda: _float("PIVOT_SCALE_PCT", 0.5))
+    # VIX symbol used to compute the regime (its own daily pivot).
+    vix_symbol: str = field(default_factory=lambda: os.getenv("VIX_SYMBOL", "$VIX"))
+    pivot_trade_log_path: str = field(default_factory=lambda: os.getenv("PIVOT_TRADE_LOG_PATH", ""))
+
     host: str = field(default_factory=lambda: os.getenv("HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: _int("PORT", 8080))
 

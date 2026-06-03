@@ -10,24 +10,28 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.strategy.engine import Engine
+from app.strategy.pivot_engine import PivotEngine
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
-app = FastAPI(title="0DTE Long-Only Auto-Trader")
+app = FastAPI(title="0DTE Auto-Trader")
 engine = Engine()
+pivot_engine = PivotEngine()
 
 
 @app.on_event("startup")
 def _startup() -> None:
     engine.start()
+    pivot_engine.start()
 
 
 @app.on_event("shutdown")
 def _shutdown() -> None:
     engine.stop()
+    pivot_engine.stop()
 
 
 @app.get("/")
@@ -52,6 +56,38 @@ def trades_csv() -> Response:
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=0dte_trades.csv"},
     )
+
+
+@app.get("/api/pivot/state")
+def pivot_state() -> JSONResponse:
+    return JSONResponse(pivot_engine.snapshot())
+
+
+@app.get("/api/pivot/trades.csv")
+def pivot_trades_csv() -> Response:
+    return Response(
+        content=pivot_engine.trades.to_csv(), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=pivot_trades.csv"},
+    )
+
+
+@app.post("/api/pivot/control/{action}")
+def pivot_control(action: str) -> dict:
+    if action == "start":
+        pivot_engine.start()
+    elif action == "stop":
+        pivot_engine.stop()
+    elif action == "kill":
+        pivot_engine.kill_switch()
+    elif action == "auto_on":
+        pivot_engine.auto_trade = True
+    elif action == "auto_off":
+        pivot_engine.auto_trade = False
+    elif action == "clear_trades":
+        return {"ok": True, "cleared": pivot_engine.trades.clear()}
+    else:
+        return {"ok": False, "error": f"unknown action '{action}'"}
+    return {"ok": True, "running": pivot_engine.running, "auto_trade": pivot_engine.auto_trade}
 
 
 @app.get("/api/config")

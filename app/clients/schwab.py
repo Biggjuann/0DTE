@@ -114,24 +114,24 @@ class SchwabClient:
     def _today(self) -> str:
         return dt.date.today().isoformat()
 
-    def get_0dte_calls(self, ticker: str, near_strike: float, width: float = 5.0) -> List[OptionContract]:
+    def _chains(self, ticker: str, contract_type: str, map_key: str, width: float) -> List[OptionContract]:
         # Pull a window of strikes around the money (do NOT pin to a rounded
-        # strike) so the caller can choose the closest *actual* listed strike to
-        # the target level — including fractional ($0.50) strikes where listed.
+        # strike) so the caller can choose the closest *actual* listed strike.
         r = self._get(
             f"{self.base}/marketdata/v1/chains",
             params={
-                "symbol": ticker, "contractType": "CALL",
+                "symbol": ticker, "contractType": contract_type,
                 "fromDate": self._today(), "toDate": self._today(),
                 "strikeCount": max(21, int(width * 2 + 1)),
             },
         )
         if r is None or r.status_code != 200:
-            log.warning("schwab chains %s -> %s", ticker, r.status_code if r else "no response")
+            log.warning("schwab chains %s %s -> %s", ticker, contract_type,
+                        r.status_code if r else "no response")
             return []
         try:
             out: List[OptionContract] = []
-            for _exp, strikes in (r.json().get("callExpDateMap") or {}).items():
+            for _exp, strikes in (r.json().get(map_key) or {}).items():
                 for _k, legs in strikes.items():
                     for leg in legs:
                         out.append(OptionContract(
@@ -146,6 +146,40 @@ class SchwabClient:
         except Exception as exc:  # pragma: no cover - network
             log.warning("schwab chains %s parse failed: %s", ticker, exc)
             return []
+
+    def get_0dte_calls(self, ticker: str, near_strike: float, width: float = 5.0) -> List[OptionContract]:
+        return self._chains(ticker, "CALL", "callExpDateMap", width)
+
+    def get_0dte_puts(self, ticker: str, near_strike: float, width: float = 5.0) -> List[OptionContract]:
+        return self._chains(ticker, "PUT", "putExpDateMap", width)
+
+    def get_prior_day_ohlc(self, ticker: str) -> Optional[dict]:
+        """High/low/close of the prior completed daily session (for pivots)."""
+        r = self._get(
+            f"{self.base}/marketdata/v1/pricehistory",
+            params={"symbol": ticker, "periodType": "month", "period": 1,
+                    "frequencyType": "daily", "frequency": 1,
+                    "needExtendedHoursData": "false"},
+        )
+        if r is None or r.status_code != 200:
+            return None
+        try:
+            candles = r.json().get("candles") or []
+            if not candles:
+                return None
+            today = dt.date.today()
+            prior = None
+            for c in reversed(candles):
+                d = dt.datetime.fromtimestamp(c["datetime"] / 1000).date()
+                if d < today:
+                    prior = c
+                    break
+            prior = prior or candles[-1]
+            return {"high": float(prior["high"]), "low": float(prior["low"]),
+                    "close": float(prior["close"])}
+        except Exception as exc:  # pragma: no cover - network
+            log.warning("schwab pivots ohlc %s failed: %s", ticker, exc)
+            return None
 
     def get_contract(self, symbol: str) -> Optional[OptionContract]:
         r = self._get(f"{self.base}/marketdata/v1/{symbol}/quotes")
@@ -202,8 +236,12 @@ class SchwabClient:
         except Exception as exc:  # pragma: no cover - network
             return Fill(False, price, f"order error: {exc}")
 
-    def buy_to_open_call(self, contract: OptionContract, qty: int) -> Fill:
+    def buy_to_open(self, contract: OptionContract, qty: int) -> Fill:
         return self._place(contract, qty, "BUY_TO_OPEN")
 
-    def sell_to_close_call(self, contract: OptionContract, qty: int) -> Fill:
+    def sell_to_close(self, contract: OptionContract, qty: int) -> Fill:
         return self._place(contract, qty, "SELL_TO_CLOSE")
+
+    # Strategy-1 aliases.
+    buy_to_open_call = buy_to_open
+    sell_to_close_call = sell_to_close

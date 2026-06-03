@@ -39,6 +39,25 @@
   .btn:hover{border-color:var(--teal);color:var(--teal)}
   .btn.kill:hover{border-color:var(--red);color:var(--red)}
   .clock{color:var(--muted);font-size:12px}
+  /* tabs */
+  .tabbar{display:flex;gap:6px;padding:14px 22px 0;max-width:1500px;margin:0 auto}
+  .tab{cursor:pointer;font-size:13px;font-weight:700;letter-spacing:.3px;color:var(--muted);
+    background:transparent;border:1px solid var(--line);border-bottom:none;
+    padding:10px 18px;border-radius:10px 10px 0 0;transition:.15s}
+  .tab.active{color:var(--teal);background:var(--panel);border-color:rgba(34,211,183,.3)}
+  .tab:hover{color:var(--txt)}
+  /* pivot bits */
+  .b-bear{background:rgba(248,113,113,.12);color:var(--red);border:1px solid rgba(248,113,113,.3)}
+  .b-bull{background:rgba(52,211,153,.12);color:var(--green);border:1px solid rgba(52,211,153,.3)}
+  .rung.res{border-color:rgba(248,113,113,.45)} .rlab.res b{color:var(--red)}
+  .rung.piv{border-color:rgba(167,139,250,.7)} .rlab.piv b{color:var(--violet)}
+  .rung.sup{border-color:rgba(52,211,153,.45)} .rlab.sup b{color:var(--green)}
+  .rlab.key b{text-shadow:0 0 8px currentColor}
+  .pill2{font-size:10px;font-weight:800;letter-spacing:.5px;padding:2px 7px;border-radius:6px;margin-left:6px}
+  .pill-short{background:rgba(248,113,113,.15);color:var(--red)}
+  .pill-long{background:rgba(52,211,153,.15);color:var(--green)}
+  .pill-scaled{background:rgba(56,189,248,.15);color:var(--blue)}
+  .pill-be{background:rgba(251,191,36,.15);color:var(--amber)}
   /* layout */
   main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
   .summary{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:20px}
@@ -137,36 +156,88 @@
   <button class="btn kill" onclick="if(confirm('Flatten all & halt trading?'))ctl('kill')">Kill</button>
 </header>
 
+<div class="tabbar">
+  <button class="tab active" id="tabbtn-gamma" onclick="switchTab('gamma')">Gamma Levels</button>
+  <button class="tab" id="tabbtn-pivot" onclick="switchTab('pivot')">Person's Pivots</button>
+</div>
+
 <main>
-  <div class="summary" id="summary"></div>
-  <div class="grid" id="cards"></div>
-  <div class="tlog">
-    <h3 style="display:flex;align-items:center;gap:12px">Trade Log
-      <span class="spacer" style="flex:1"></span>
-      <span id="exitTypes" class="muted" style="font-size:11px;letter-spacing:0;text-transform:none"></span>
-      <a class="btn" href="/api/trades.csv" download style="text-decoration:none">⬇ Download CSV</a>
-      <button class="btn kill" onclick="clearLog()">Clear log</button>
-    </h3>
-    <table>
-      <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Contract</th><th>Strike</th>
-        <th>Qty</th><th>Price</th><th>P&amp;L</th><th>Reason</th></tr></thead>
-      <tbody id="tlog"></tbody>
-    </table>
-  </div>
+  <section id="tab-gamma">
+    <div class="summary" id="summary"></div>
+    <div class="grid" id="cards"></div>
+    <div class="tlog">
+      <h3 style="display:flex;align-items:center;gap:12px">Trade Log
+        <span class="spacer" style="flex:1"></span>
+        <span id="exitTypes" class="muted" style="font-size:11px;letter-spacing:0;text-transform:none"></span>
+        <a class="btn" href="/api/trades.csv" download style="text-decoration:none">⬇ Download CSV</a>
+        <button class="btn kill" onclick="clearLog()">Clear log</button>
+      </h3>
+      <table>
+        <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Contract</th><th>Strike</th>
+          <th>Qty</th><th>Price</th><th>P&amp;L</th><th>Reason</th></tr></thead>
+        <tbody id="tlog"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-pivot" style="display:none">
+    <div class="banner" id="pivotRegime" style="margin-bottom:18px">VIX regime…</div>
+    <div class="summary" id="psummary"></div>
+    <div class="grid" id="pcards"></div>
+    <div class="tlog">
+      <h3 style="display:flex;align-items:center;gap:12px">Pivot Trade Log
+        <span class="spacer" style="flex:1"></span>
+        <span id="pexitTypes" class="muted" style="font-size:11px;letter-spacing:0;text-transform:none"></span>
+        <a class="btn" href="/api/pivot/trades.csv" download style="text-decoration:none">⬇ Download CSV</a>
+        <button class="btn kill" onclick="clearLog()">Clear log</button>
+      </h3>
+      <table>
+        <thead><tr><th>Time</th><th>Ticker</th><th>Action</th><th>Contract</th><th>Strike</th>
+          <th>Qty</th><th>Price</th><th>P&amp;L</th><th>Reason</th></tr></thead>
+        <tbody id="ptlog"></tbody>
+      </table>
+    </div>
+  </section>
 </main>
 
 <script>
-let AUTO=true;
+let AUTO=true, activeTab='gamma';
 const fmt=(n,d=2)=>n==null?'—':Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
 const money=n=>n==null?'—':(n<0?'-$':'$')+Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const k=n=>n==null?'—':n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(1)+'K':n.toFixed(0);
+const apiBase=()=>activeTab==='pivot'?'/api/pivot/control/':'/api/control/';
 
-async function ctl(a){await fetch('/api/control/'+a,{method:'POST'});setTimeout(refresh,150);}
+function switchTab(t){
+  activeTab=t;
+  document.getElementById('tab-gamma').style.display=t==='gamma'?'':'none';
+  document.getElementById('tab-pivot').style.display=t==='pivot'?'':'none';
+  document.getElementById('tabbtn-gamma').classList.toggle('active',t==='gamma');
+  document.getElementById('tabbtn-pivot').classList.toggle('active',t==='pivot');
+  updateHeader();
+}
+async function ctl(a){await fetch(apiBase()+a,{method:'POST'});setTimeout(refresh,150);}
 function toggleAuto(){ctl(AUTO?'auto_off':'auto_on');}
 async function clearLog(){
-  if(!confirm('Clear the entire trade log? This cannot be undone.')) return;
-  const r=await fetch('/api/control/clear_trades',{method:'POST'});
+  const name=activeTab==='pivot'?'pivot':'gamma-levels';
+  if(!confirm('Clear the '+name+' trade log? This cannot be undone.')) return;
+  const r=await fetch(apiBase()+'clear_trades',{method:'POST'});
   const j=await r.json(); alert('Cleared '+(j.cleared||0)+' records'); refresh();
+}
+
+function updateHeader(){
+  const s=activeTab==='pivot'?window.pivotSnap:window.gammaSnap;
+  if(!s) return;
+  AUTO=s.auto_trade;
+  document.getElementById('srcTxt').textContent=
+    activeTab==='pivot'?`· pivots: ${s.mode==='live'?'schwab':'mock'}`:(window.gammaSrc||'');
+  const mb=document.getElementById('modeBadge');
+  mb.textContent=s.mode; mb.className='badge '+(s.mode==='live'?'live':'mock');
+  const dry=document.getElementById('dryBadge');
+  dry.textContent=s.dry_run?'DRY RUN':'LIVE ORDERS';
+  dry.className='badge '+(s.dry_run?'dry':'armed-real');
+  document.getElementById('runDot').className='dot'+(s.running?' on':'');
+  document.getElementById('runTxt').textContent=s.running?'engine running':'stopped';
+  document.getElementById('autoBtn').textContent='Auto: '+(s.auto_trade?'ON':'OFF');
 }
 
 function statusBanner(mm){
@@ -261,21 +332,11 @@ function card(t){
 }
 
 function render(s){
+  window.gammaSnap=s;
   window.PROX=s.proximity;
   window.SOFF=s.strike_offset;
   window.SRV=s.server_time;
-  AUTO=s.auto_trade;
-  document.getElementById('srcTxt').textContent=
-    s.mode==='live'?`· data: ${s.market_data_provider}`:'· data: mock';
-  document.getElementById('modeBadge').textContent=s.mode;
-  document.getElementById('modeBadge').className='badge '+(s.mode==='live'?'live':'mock');
-  const dry=document.getElementById('dryBadge');
-  dry.textContent=s.dry_run?'DRY RUN':'LIVE ORDERS';
-  dry.className='badge '+(s.dry_run?'dry':'armed-real');
-  document.getElementById('runDot').className='dot'+(s.running?' on':'');
-  document.getElementById('runTxt').textContent=s.running?'engine running':'stopped';
-  const ab=document.getElementById('autoBtn');
-  ab.textContent='Auto: '+(s.auto_trade?'ON':'OFF');
+  window.gammaSrc=(s.mode==='live'?`· data: ${s.market_data_provider}`:'· data: mock');
 
   const openCount=s.tickers.filter(t=>t.state==='open').length;
   const sm=s.summary;
@@ -308,8 +369,103 @@ function render(s){
   }).join('');
 }
 
+// ---- Person's Pivots tab ----
+function pivotRegime(s){
+  const el=document.getElementById('pivotRegime');
+  if(!s.regime){el.className='banner b-off';el.textContent='VIX regime unknown — awaiting VIX data';return;}
+  if(s.regime==='bearish'){el.className='banner b-bear';
+    el.textContent=`BEARISH — VIX ${fmt(s.vix_last)} > pivot ${fmt(s.vix_pp)}  ·  shorts at R1 (buy puts)`;}
+  else{el.className='banner b-bull';
+    el.textContent=`BULLISH — VIX ${fmt(s.vix_last)} ≤ pivot ${fmt(s.vix_pp)}  ·  longs at S1 (buy calls)`;}
+}
+
+function pivotLadder(pv,price){
+  if(!pv) return '<div class="empty">awaiting pivots…</div>';
+  const items=[{v:pv.r3,cls:'res',lab:'R3'},{v:pv.r2,cls:'res',lab:'R2'},{v:pv.r1,cls:'res key',lab:'R1'},
+    {v:pv.pp,cls:'piv key',lab:'PP'},
+    {v:pv.s1,cls:'sup key',lab:'S1'},{v:pv.s2,cls:'sup',lab:'S2'},{v:pv.s3,cls:'sup',lab:'S3'}];
+  const vals=items.map(i=>i.v).concat(price!=null?[price]:[]);
+  const pad=(Math.max(...vals)-Math.min(...vals))*0.08||1;
+  const min=Math.min(...vals)-pad,max=Math.max(...vals)+pad;
+  const pct=v=>Math.max(2,Math.min(98,(v-min)/(max-min)*100));
+  const lines=items.map(i=>`<div class="rung ${i.cls}" style="bottom:${pct(i.v)}%"></div>`).join('');
+  const labs=items.map(i=>({...i,pos:pct(i.v)})).sort((a,b)=>a.pos-b.pos);
+  const GAP=11;
+  for(let j=1;j<labs.length;j++) if(labs[j].pos-labs[j-1].pos<GAP) labs[j].pos=labs[j-1].pos+GAP;
+  const labels=labs.map(i=>`<div class="rlab ${i.cls}" style="bottom:${i.pos}%"><span>${i.lab}</span><b class="mono">${fmt(i.v)}</b></div>`).join('');
+  const px=price!=null?`<div class="pxmark" style="bottom:${pct(price)}%"><span class="tag mono">${fmt(price)}</span></div>`:'';
+  return `<div class="ladder" style="height:230px">${lines}${labels}${px}</div>`;
+}
+
+function pivotPosition(t){
+  const p=t.position, pv=t.pivots;
+  if(!p){
+    if(t.state==='armed'&&pv&&t.direction)
+      return `<div class="targets">Armed ${t.direction} · trigger ${t.direction==='SHORT'?'R1 '+fmt(pv.r1):'S1 '+fmt(pv.s1)} · strike ≈ PP ${fmt(pv.pp)}</div>`;
+    return '';
+  }
+  const dirPill=p.direction==='SHORT'?'pill-short':'pill-long';
+  const tot=t.total_pnl, opc=tot>=0?'pnl-pos':'pnl-neg';
+  return `<div class="pos">
+    <div class="row"><span>Position</span><span><span class="pill2 ${dirPill}">${p.direction} ${p.option_type}</span>${p.scaled?' <span class="pill2 pill-scaled">SCALED 50%</span>':''}${p.breakeven?' <span class="pill2 pill-be">BE STOP</span>':''}</span></div>
+    <div class="row"><span>Contract</span><span class="mono">${p.contract_symbol}</span></div>
+    <div class="row"><span>Qty (rem / init)</span><span class="mono">${p.remaining_qty} / ${p.qty}</span></div>
+    <div class="row"><span>Entry → Now</span><span class="mono">${fmt(p.entry_price)} → ${fmt(p.current_price)}</span></div>
+    <div class="row"><span>Stop / Target</span><span class="mono">${fmt(p.stop_premium)} prem · ${fmt(p.target)}</span></div>
+    <div class="row"><span>Realized + Open</span><span class="mono ${opc}">${money(p.realized_pnl)} + ${money(t.open_pnl)} = ${money(tot)}</span></div>
+    <div class="targets">Scale 50% at PP ${fmt(p.pp)} → stop to breakeven → run to ${p.direction==='SHORT'?'S1':'R1'} ${fmt(p.target)}</div>
+  </div>`;
+}
+
+function pcard(t){
+  const stCls=t.state==='open'?'st-open':t.state==='armed'?'st-armed':'st-disabled';
+  return `<div class="card ${t.state==='open'?'open':''}">
+    <div class="chead">
+      <span class="tkr">${t.ticker}</span>
+      <span class="state-pill ${stCls}">${t.state}</span>
+      ${t.direction?`<span class="pill2 ${t.direction==='SHORT'?'pill-short':'pill-long'}">${t.direction}</span>`:''}
+      <div class="spacer"></div>
+      <span class="price mono">${t.quote?fmt(t.quote.last):'—'}</span>
+      ${freshness(t)}
+    </div>
+    ${pivotLadder(t.pivots,t.quote?t.quote.last:null)}
+    ${pivotPosition(t)}
+    <div class="events">${(t.events||[]).map(e=>`<div><span class="mono">${e.slice(0,8)}</span> ${e.slice(8)}</div>`).join('')||'<div class="muted">no events yet</div>'}</div>
+  </div>`;
+}
+
+function renderPivot(s){
+  window.pivotSnap=s; window.SRV=s.server_time;
+  pivotRegime(s);
+  const openCount=s.tickers.filter(t=>t.state==='open').length;
+  const sm=s.summary;
+  const stat=(kk,v,cls='')=>`<div class="stat"><div class="k">${kk}</div><div class="v ${cls}">${v}</div></div>`;
+  document.getElementById('psummary').innerHTML=
+    stat("Today P&L",money(sm.today_pnl),sm.today_pnl>=0?'pnl-pos':'pnl-neg')+
+    stat("Realized P&L",money(sm.realized_pnl),sm.realized_pnl>=0?'pnl-pos':'pnl-neg')+
+    stat("Win Rate",sm.win_rate+'%')+
+    stat("Closed Trades",sm.closed_trades)+
+    stat("Open Positions",openCount,openCount?'pnl-pos':'');
+  const et=sm.exit_types||{};
+  document.getElementById('pexitTypes').textContent=Object.keys(et).map(kk=>`${kk}×${et[kk]}`).join('  ');
+  document.getElementById('pcards').innerHTML=s.tickers.map(pcard).join('');
+  const tb=document.getElementById('ptlog');
+  if(!s.trades.length){tb.innerHTML='<tr><td colspan="9" class="empty">No trades yet</td></tr>';}
+  else tb.innerHTML=s.trades.map(t=>{
+    const time=new Date(t.ts*1000).toLocaleTimeString();
+    const pnl=t.pnl==null?'—':`<span class="${t.pnl>=0?'pnl-pos':'pnl-neg'} mono">${money(t.pnl)}</span>`;
+    return `<tr><td class="mono muted">${time}</td><td><b>${t.ticker}</b></td>
+      <td class="tag-${t.action.toLowerCase()}">${t.action}</td>
+      <td class="mono">${t.contract_symbol}</td><td class="mono">${fmt(t.strike)}</td>
+      <td class="mono">${t.qty}</td><td class="mono">${fmt(t.price)}</td><td>${pnl}</td>
+      <td class="muted">${t.exit_type?`<b style="color:var(--txt)">${t.exit_type}</b> · `:''}${t.reason}${t.dry_run?' <span class="mini">DRY</span>':''}</td></tr>`;
+  }).join('');
+}
+
 async function refresh(){
   try{const r=await fetch('/api/state');render(await r.json());}catch(e){}
+  try{const r=await fetch('/api/pivot/state');renderPivot(await r.json());}catch(e){}
+  updateHeader();
 }
 setInterval(()=>document.getElementById('clock').textContent=new Date().toLocaleTimeString(),1000);
 setInterval(refresh,2000);
