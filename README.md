@@ -60,6 +60,12 @@ prior session's OHLC: `PP=(H+L+C)/3`, `R1=2PP−L`, `S1=2PP−H`, …).
 - Pivot data is **Schwab-backed** (daily OHLC + VIX) regardless of
   `MARKET_DATA_PROVIDER`. Its own trade log (`PIVOT_TRADE_LOG_PATH`),
   CSV export (`/api/pivot/trades.csv`), and controls (`/api/pivot/control/...`).
+- **Bad-data guards** (a single spiked/stale print must not trade): decisions run
+  on the validated 1-minute close; a price >`PIVOT_MAX_DEV_PCT` from the prior
+  close or >`PIVOT_MAX_JUMP_PCT` between ticks is rejected; entries require a
+  two-sided option market; exits are priced off an **intrinsic-floored** mark so
+  a stale book can't fabricate a loss; and a `PIVOT_MIN_HOLD_SECONDS` window plus
+  one-structural-action-per-tick prevent enter-and-flatten on the same spike.
 
 ## Dashboard
 

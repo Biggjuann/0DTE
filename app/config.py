@@ -92,6 +92,13 @@ class Settings:
     pivot_scale_pct: float = field(default_factory=lambda: _float("PIVOT_SCALE_PCT", 0.5))
     # VIX symbol used to compute the regime (its own daily pivot).
     vix_symbol: str = field(default_factory=lambda: os.getenv("VIX_SYMBOL", "$VIX"))
+    # --- bad-data guards (a single spiked print must not trigger a trade) ---
+    # Reject a decision price that deviates more than this from the prior close.
+    pivot_max_dev_pct: float = field(default_factory=lambda: _float("PIVOT_MAX_DEV_PCT", 0.03))
+    # Reject a decision price that jumps more than this between consecutive ticks.
+    pivot_max_jump_pct: float = field(default_factory=lambda: _float("PIVOT_MAX_JUMP_PCT", 0.02))
+    # Let a fresh position breathe before any scale/stop/target can fire (seconds).
+    pivot_min_hold_seconds: float = field(default_factory=lambda: _float("PIVOT_MIN_HOLD_SECONDS", 3.0))
     pivot_trade_log_path: str = field(default_factory=lambda: os.getenv("PIVOT_TRADE_LOG_PATH", ""))
 
     host: str = field(default_factory=lambda: os.getenv("HOST", "0.0.0.0"))

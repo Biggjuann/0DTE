@@ -36,6 +36,8 @@ class PivotTickerState:
     state: str = "disabled"          # disabled / armed / open
     position: Optional[PivotPosition] = None
     can_enter: bool = True           # one entry per level touch
+    last_good_price: Optional[float] = None   # last validated decision price
+    quote_bad: bool = False          # currently rejecting spiked quotes
     last_event: str = "waiting for data"
     events: List[str] = field(default_factory=list)
     updated: float = field(default_factory=time.time)
@@ -122,20 +124,46 @@ class PivotEngine:
                     self._last_pivots[ticker] = now
                 if now - self._last_quote.get(ticker, 0) >= settings.quote_poll_seconds:
                     q = self.providers.market.get_quote(ticker)
-                    if q:
-                        st.quote = q
                     self._last_quote[ticker] = now
+                    if q is not None:
+                        self._accept_quote(st, q)
                 self._evaluate(st)
                 st.updated = now
 
+    def _accept_quote(self, st: PivotTickerState, q: Quote) -> None:
+        """Reject single spiked/stale prints so one bad tick can't trade."""
+        dp = q.minute_close or q.last
+        if dp is None:
+            return
+        reason = None
+        if st.last_good_price:
+            jump = abs(dp - st.last_good_price) / st.last_good_price
+            if jump > settings.pivot_max_jump_pct:
+                reason = f"jump {jump*100:.1f}% from {st.last_good_price:.2f}"
+        pc = st.pivots.prior_close if st.pivots else None
+        if reason is None and pc:
+            dev = abs(dp - pc) / pc
+            if dev > settings.pivot_max_dev_pct:
+                reason = f"dev {dev*100:.1f}% from prior close {pc:.2f}"
+        if reason is not None:
+            log.warning("[%s] quote rejected: %.2f (%s)", st.ticker, dp, reason)
+            if not st.quote_bad:
+                st.log_event(f"QUOTE REJECTED {dp:.2f} ({reason}) — holding {st.last_good_price}")
+            st.quote_bad = True
+            return
+        if st.quote_bad:
+            st.log_event(f"quote recovered @ {dp:.2f}")
+        st.quote_bad = False
+        st.quote = q
+        st.last_good_price = dp
+
     # --- state machine -------------------------------------------------------
     def _evaluate(self, st: PivotTickerState) -> None:
-        if not (st.pivots and st.quote and self.regime):
+        if not (st.pivots and st.quote and self.regime and st.last_good_price):
             return
-        pv, price = st.pivots, st.quote.last
+        pv, price = st.pivots, st.last_good_price   # decide on the validated price
         prox = settings.pivot_proximity
-        if st.pivots.spot != price:
-            st.pivots.spot = price
+        st.pivots.spot = st.quote.last              # display the live tick
 
         if st.position is None:
             if self.regime == "bearish":
@@ -189,18 +217,24 @@ class PivotEngine:
             st.log_event("ENTRY blocked — no 0DTE chain")
             st.state = "armed"
             return
+        if contract.bid <= 0 or contract.ask <= 0:
+            st.log_event(f"ENTRY blocked — one-sided/stale market on {contract.symbol} "
+                         f"(bid {contract.bid:.2f} / ask {contract.ask:.2f})")
+            st.state = "armed"
+            return
         fill = self.providers.broker.buy_to_open(contract, settings.pivot_contracts)
         if not fill.accepted:
             st.log_event(f"ENTRY rejected: {fill.message}")
             st.state = "armed"
             return
+        under = st.last_good_price
         qty = settings.pivot_contracts
         st.position = PivotPosition(
             ticker=st.ticker, direction=direction, option_type=option_type,
             contract_symbol=contract.symbol, strike=contract.strike, expiry=contract.expiry,
             qty=qty, remaining_qty=qty, entry_price=fill.price, entry_time=time.time(),
-            entry_underlying=st.quote.last, pp=pv.pp, target=target,
-            current_price=fill.price, last_underlying=st.quote.last,
+            entry_underlying=under, pp=pv.pp, target=target,
+            current_price=fill.price, last_underlying=under,
             stop_premium=round(fill.price * (1 - settings.pivot_stop_pct), 2),
         )
         st.state = "open"
@@ -211,14 +245,29 @@ class PivotEngine:
         self.trades.append(self._record("ENTRY", st.position, qty, fill.price, None, None))
 
     # --- management ----------------------------------------------------------
+    def _intrinsic(self, pos: PivotPosition, underlying: float) -> float:
+        return (max(0.0, pos.strike - underlying) if pos.option_type == "PUT"
+                else max(0.0, underlying - pos.strike))
+
+    def _mark(self, pos: PivotPosition, c: Optional[OptionContract], underlying: float) -> float:
+        """A premium mark that is never below intrinsic, so a stale one-sided
+        quote (e.g. 0.51 on a deep-ITM option) can't fabricate a loss."""
+        intrinsic = round(self._intrinsic(pos, underlying), 2)
+        est = c.mid if (c and c.bid > 0 and c.ask > 0) else (c.mid if c else 0.0)
+        return round(max(est, intrinsic), 2)
+
     def _manage(self, st: PivotTickerState) -> None:
         pos = st.position
+        under = st.last_good_price
+        pos.last_underlying = under
         c = self.providers.market.get_contract(pos.contract_symbol)
-        if c and c.mid:
-            pos.current_price = c.mid
-        pos.last_underlying = st.quote.last
-        price = st.quote.last
+        pos.current_price = self._mark(pos, c, under)
+        price = under
         pv = st.pivots
+
+        # 0) Let a fresh fill breathe — never enter and fully exit on one spike.
+        if time.time() - pos.entry_time < settings.pivot_min_hold_seconds:
+            return
 
         # 1) Premium stop (50% of value, or breakeven after the scale).
         if pos.current_price <= pos.stop_premium:
@@ -227,6 +276,8 @@ class PivotEngine:
             return
 
         # 2) Scale 50% at the pivot, then move stop to breakeven.
+        #    One structural action per tick: after scaling we return and let the
+        #    runner be managed on the next tick (no same-tick scale+target).
         reached_pivot = (price <= pv.pp) if pos.direction == "SHORT" else (price >= pv.pp)
         if reached_pivot and not pos.scaled:
             half = max(1, int(round(pos.qty * settings.pivot_scale_pct)))
@@ -239,7 +290,7 @@ class PivotEngine:
             if pos.remaining_qty <= 0:
                 st.position = None
                 st.state = "armed"
-                return
+            return
 
         # 3) Final target: S1 (short) / R1 (long).
         hit_target = (price <= pos.target) if pos.direction == "SHORT" else (price >= pos.target)
@@ -252,9 +303,12 @@ class PivotEngine:
         pos = st.position
         if not pos or qty <= 0:
             return
-        contract = self.providers.market.get_contract(pos.contract_symbol) or OptionContract(
-            symbol=pos.contract_symbol, strike=pos.strike, expiry=pos.expiry,
-            bid=pos.current_price, ask=pos.current_price, last=pos.current_price)
+        # Price the exit off an intrinsic-floored mark so a stale book can't
+        # fill at an impossible premium (dry-run *or* live limit price).
+        under = st.last_good_price if st.last_good_price is not None else pos.last_underlying
+        mark = self._mark(pos, self.providers.market.get_contract(pos.contract_symbol), under)
+        contract = OptionContract(symbol=pos.contract_symbol, strike=pos.strike,
+                                  expiry=pos.expiry, bid=mark, ask=mark, last=mark)
         fill = self.providers.broker.sell_to_close(contract, qty)
         if not fill.accepted:
             st.log_event(f"EXIT rejected: {fill.message}")
