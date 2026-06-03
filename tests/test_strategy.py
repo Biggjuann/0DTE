@@ -178,6 +178,19 @@ def test_top_exit_fires_when_in_top_zone():
     assert "top" in st(eng).last_event.lower()
 
 
+def test_strike_picks_closest_available_not_nearest_dollar():
+    p = ScriptProvider()
+    # A real strike ladder including a fractional strike closer to the target.
+    p.get_0dte_calls = lambda t, near_strike, width=5.0: [
+        OptionContract("A", 746.0, "0dte", 1.0, 1.1, 1.05),
+        OptionContract("B", 746.5, "0dte", 1.0, 1.1, 1.05),
+        OptionContract("C", 747.0, "0dte", 1.0, 1.1, 1.05),
+    ]
+    eng = make_engine(p)
+    c = eng._pick_call("QQQ", 746.66)   # target mid+offset
+    assert c.strike == 746.5, "must pick the closest listed strike, not the nearest dollar"
+
+
 def test_protective_exit_on_bearish():
     p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
     eng = make_engine(p); eng._tick()

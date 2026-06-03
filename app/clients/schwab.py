@@ -115,12 +115,15 @@ class SchwabClient:
         return dt.date.today().isoformat()
 
     def get_0dte_calls(self, ticker: str, near_strike: float, width: float = 5.0) -> List[OptionContract]:
+        # Pull a window of strikes around the money (do NOT pin to a rounded
+        # strike) so the caller can choose the closest *actual* listed strike to
+        # the target level — including fractional ($0.50) strikes where listed.
         r = self._get(
             f"{self.base}/marketdata/v1/chains",
             params={
                 "symbol": ticker, "contractType": "CALL",
                 "fromDate": self._today(), "toDate": self._today(),
-                "strikeCount": int(width * 2 + 1), "strike": round(near_strike),
+                "strikeCount": max(21, int(width * 2 + 1)),
             },
         )
         if r is None or r.status_code != 200:
