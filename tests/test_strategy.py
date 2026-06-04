@@ -51,6 +51,8 @@ class ScriptProvider:
 def make_engine(p):
     settings.tickers = ["QQQ"]
     settings.rth_only = False   # mechanics tests run regardless of wall-clock time
+    settings.stop_cooldown_seconds = 0   # off unless a test enables it
+    settings.rearm_distance = 0.0        # 0 = use proximity
     settings.proximity = 1.0
     settings.contracts = 1
     settings.strike_offset = 1.0
@@ -220,6 +222,43 @@ def test_protective_exit_on_bearish():
     eng._tick()
     assert st(eng).position is None
     assert st(eng).state is PositionState.DISABLED
+
+
+def test_stop_cooldown_blocks_immediate_reentry():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0  # near lower -> enter
+    eng = make_engine(p)
+    settings.stop_cooldown_seconds = 300
+    eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    p.price = 524.0; eng._tick()                       # break below wall -> STOP
+    assert st(eng).position is None and "STOP" in st(eng).last_event
+    p.price = 527.0; eng._tick()                       # leaves the band -> re-arm
+    p.price = 525.0; eng._tick()                       # re-touch the wall
+    assert st(eng).position is None, "cooldown must block immediate re-entry"
+    assert "cooldown" in st(eng).last_event.lower()
+
+
+def test_reentry_allowed_without_cooldown():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    eng = make_engine(p)
+    settings.stop_cooldown_seconds = 0                 # cooldown off
+    eng._tick()
+    p.price = 524.0; eng._tick()                       # STOP
+    assert st(eng).position is None
+    p.price = 527.0; eng._tick()                       # re-arm
+    p.price = 525.0; eng._tick()                       # re-touch
+    assert st(eng).position is not None, "without cooldown, re-entry is allowed"
+
+
+def test_wide_rearm_distance_prevents_rearm():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    eng = make_engine(p)
+    settings.rearm_distance = 5.0                      # must exceed 530 to re-arm
+    eng._tick()
+    p.price = 524.0; eng._tick()                       # STOP
+    p.price = 527.0; eng._tick()                       # within band -> NOT re-armed
+    p.price = 525.0; eng._tick()                       # re-touch wall
+    assert st(eng).position is None, "wide re-arm band should suppress the re-touch"
 
 
 if __name__ == "__main__":

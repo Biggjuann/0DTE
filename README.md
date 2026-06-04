@@ -67,6 +67,16 @@ prior session's OHLC: `PP=(H+L+C)/3`, `R1=2PP−L`, `S1=2PP−H`, …).
   a stale book can't fabricate a loss; and a `PIVOT_MIN_HOLD_SECONDS` window plus
   one-structural-action-per-tick prevent enter-and-flatten on the same spike.
 
+## Anti-whipsaw (gamma strategy)
+
+A price hovering right at the put wall used to churn enter→stop→re-enter. Two
+damping controls (in addition to the existing re-arm-on-retouch latch):
+
+- **Stop cooldown** — after a `STOP`, the ticker sits out for
+  `STOP_COOLDOWN_SECONDS` (default 180s) before any re-entry.
+- **Re-arm distance** — `REARM_DISTANCE` widens the band price must clear above
+  the wall before it can re-arm (0 = use `PROXIMITY`).
+
 ## Regular-trading-hours gate (both strategies)
 
 These are **0DTE** options, so **all** activity is restricted to the US equity

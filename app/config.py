@@ -60,6 +60,10 @@ class Settings:
     # only require proper ordering (lower < mid < top); raise to stand aside on
     # tight channels.
     min_channel_gap: float = field(default_factory=lambda: _float("MIN_CHANNEL_GAP", 0.0))
+    # Anti-whipsaw: after a STOP, block re-entry on the same ticker for this long.
+    stop_cooldown_seconds: int = field(default_factory=lambda: _int("STOP_COOLDOWN_SECONDS", 180))
+    # Price must rise this far above the put wall to re-arm (0 = use proximity).
+    rearm_distance: float = field(default_factory=lambda: _float("REARM_DISTANCE", 0.0))
 
     quote_poll_seconds: int = field(default_factory=lambda: _int("QUOTE_POLL_SECONDS", 5))
     levels_poll_seconds: int = field(default_factory=lambda: _int("LEVELS_POLL_SECONDS", 60))

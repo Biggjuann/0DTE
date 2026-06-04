@@ -53,6 +53,7 @@ class TickerState:
     prev_status: Optional[MMStatus] = None
     saw_long_in_trade: bool = False
     can_enter: bool = True       # re-arm latch: one entry per put-wall touch
+    cooldown_until: float = 0.0  # anti-whipsaw: no re-entry until this time
     quote_error: Optional[str] = None
     last_event: str = "waiting for data"
     events: List[str] = field(default_factory=list)
@@ -189,9 +190,12 @@ class Engine:
         if st.position is None:
             # Re-arm latch: once price leaves the put-wall band (upward) we are
             # allowed one entry on the next touch. This prevents re-entering the
-            # same touch over and over.
-            if price > lv.lower + prox:
+            # same touch over and over. REARM_DISTANCE (default = proximity) can
+            # widen the band so a noisy hover at the wall doesn't keep re-arming.
+            rearm = settings.rearm_distance or prox
+            if price > lv.lower + rearm:
                 st.can_enter = True
+            in_cooldown = time.time() < st.cooldown_until
 
             if not approved:
                 msg = f"MM status '{mm.status.value}' — no long approval"
@@ -209,9 +213,15 @@ class Engine:
                 # (lower) AND stance is long or cautious-long. We require price at
                 # or above the wall so we don't enter into an immediate stop.
                 at_putwall = lv.lower <= price <= lv.lower + prox
-                if at_putwall and st.can_enter and entries_open:
+                if at_putwall and st.can_enter and entries_open and not in_cooldown:
                     self._enter(st)
                     st.can_enter = False
+                elif at_putwall and st.can_enter and in_cooldown:
+                    left = int(st.cooldown_until - time.time())
+                    msg = f"signal at put wall but in stop-cooldown ({left}s left) — standing aside"
+                    if st.last_event != msg:
+                        st.log_event(msg)
+                    st.state = PositionState.ARMED
                 elif at_putwall and st.can_enter and not entries_open:
                     msg = f"signal at put wall but late session ({market_hours.label()}) — no new entries"
                     if st.last_event != msg:
@@ -343,6 +353,10 @@ class Engine:
         ))
         st.position = None
         st.saw_long_in_trade = False
+        # Anti-whipsaw: after a STOP, sit out for STOP_COOLDOWN_SECONDS so a price
+        # hovering at the put wall can't churn enter/stop repeatedly.
+        if exit_type == "STOP" and settings.stop_cooldown_seconds > 0:
+            st.cooldown_until = time.time() + settings.stop_cooldown_seconds
         st.state = PositionState.ARMED if (st.mm and st.mm.status.approves_entry) else PositionState.DISABLED
 
     # --- snapshot for the dashboard -----------------------------------------
