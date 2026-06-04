@@ -132,8 +132,12 @@ class PivotEngine:
                 st.updated = now
 
     def _accept_quote(self, st: PivotTickerState, q: Quote) -> None:
-        """Reject single spiked/stale prints so one bad tick can't trade."""
-        dp = q.minute_close or q.last
+        """Validate the live price and reject single spiked/stale prints.
+
+        Decisions use the LIVE `last` (not the 1-minute close): the dev/jump
+        guards below provide the spike protection, while the minute close lagged
+        the market and made scale/target fire late or not at all."""
+        dp = q.last or q.minute_close
         if dp is None:
             return
         reason = None
@@ -174,9 +178,9 @@ class PivotEngine:
 
         if not (st.pivots and st.quote and self.regime and st.last_good_price):
             return
-        pv, price = st.pivots, st.last_good_price   # decide on the validated price
+        pv, price = st.pivots, st.last_good_price   # validated live price
         prox = settings.pivot_proximity
-        st.pivots.spot = st.quote.last              # display the live tick
+        st.pivots.spot = st.quote.last
         entries_open = market_hours.entries_allowed(ph)  # False during 'late'
 
         if st.position is None:

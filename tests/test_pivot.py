@@ -26,7 +26,8 @@ class FakePivot:
         # Prior-day OHLC chosen so PP≈743.94, R1≈748.66, S1≈741.45 (the incident).
         self.ohlc = {"QQQ": {"high": 746.41, "low": 739.2, "close": 746.21},
                      "$VIX": {"high": 17.0, "low": 15.0, "close": 16.0}}
-        self.price = 740.0          # real underlying
+        self.price = 740.0          # real (live) underlying
+        self.mclose = None          # lagging 1-minute close (None -> tracks price)
         self.vix = 16.06            # > VIX PP (16.0) -> bearish
         self.opt_bid = 3.0
         self.opt_ask = 3.1
@@ -35,8 +36,10 @@ class FakePivot:
 
     # MarketData
     def get_quote(self, ticker):
-        v = self.vix if ticker == "$VIX" else self.price
-        return Quote(ticker=ticker, last=v, minute_close=v)
+        if ticker == "$VIX":
+            return Quote(ticker=ticker, last=self.vix, minute_close=self.vix)
+        mc = self.mclose if self.mclose is not None else self.price
+        return Quote(ticker=ticker, last=self.price, minute_close=mc)
 
     def get_prior_day_ohlc(self, ticker):
         return self.ohlc.get(ticker)
@@ -192,6 +195,19 @@ def test_pivots_frozen_for_session():
     src.o = {"high": 800.0, "low": 700.0, "close": 750.0}   # source revises intraday
     b = pp.get_pivots("QQQ")
     assert b.pp == a.pp and b.r1 == a.r1 and b.s1 == a.s1, "pivots must be frozen for the session"
+
+
+def test_management_uses_live_last_not_lagging_minute_close():
+    """Scale/target must respond to the live price, not a stale 1-minute close.
+    (Live price hit R1/PP but the lagging minute close kept the trade from acting.)"""
+    p = FakePivot(); p.price = 748.5                  # bearish -> SHORT at R1, pos.pp ~743.94
+    eng = make_engine(p); eng._tick()
+    pos = stt(eng).position
+    assert pos is not None and not pos.scaled
+    p.price = pos.pp - 0.1                             # live price reaches the pivot
+    p.mclose = pos.pp + 3.0                            # 1-minute close still lags up high
+    eng._tick()
+    assert stt(eng).position.scaled, "scale must use the live last, not the lagging minute close"
 
 
 if __name__ == "__main__":
