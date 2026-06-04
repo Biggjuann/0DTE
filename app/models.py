@@ -129,6 +129,7 @@ class Position:
     entry_underlying: float
     current_price: float = 0.0   # current per-contract premium
     last_underlying: float = 0.0
+    breakeven_armed: bool = False  # set once +100% profit is reached
     # Entry context (for review/analytics).
     entry_lower: Optional[float] = None
     entry_mid: Optional[float] = None

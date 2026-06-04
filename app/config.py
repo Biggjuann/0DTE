@@ -60,6 +60,9 @@ class Settings:
     # only require proper ordering (lower < mid < top); raise to stand aside on
     # tight channels.
     min_channel_gap: float = field(default_factory=lambda: _float("MIN_CHANNEL_GAP", 0.0))
+    # Arm a breakeven stop once open profit reaches this fraction of premium
+    # (1.0 = +100% / premium doubled). 0 disables it.
+    breakeven_arm_profit: float = field(default_factory=lambda: _float("BREAKEVEN_ARM_PROFIT", 1.0))
     # Anti-whipsaw: after a STOP, block re-entry on the same ticker for this long.
     stop_cooldown_seconds: int = field(default_factory=lambda: _int("STOP_COOLDOWN_SECONDS", 180))
     # Price must rise this far above the put wall to re-arm (0 = use proximity).

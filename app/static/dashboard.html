@@ -25,7 +25,9 @@
   .brand{font-weight:800;letter-spacing:.5px;font-size:18px}
   .brand b{color:var(--teal)}
   .badge{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;
-    padding:4px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+    padding:4px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted);
+    white-space:nowrap}
+  #sessionBadge{border-radius:8px}
   .badge.live{color:#04140f;background:var(--green);border-color:transparent}
   .badge.mock{color:var(--blue);border-color:rgba(56,189,248,.35)}
   .badge.dry{color:var(--amber);border-color:rgba(251,191,36,.35)}
@@ -69,6 +71,41 @@
   .stat .v{font-size:26px;font-weight:800;margin-top:4px}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
   @media(max-width:1000px){.grid{grid-template-columns:1fr}.summary{grid-template-columns:repeat(2,1fr)}}
+  /* phones */
+  @media(max-width:680px){
+    header{gap:7px 9px;padding:9px 12px;flex-wrap:wrap}
+    .brand{font-size:16px}
+    .badge{font-size:10px;padding:3px 7px;letter-spacing:.3px}
+    #srcTxt{display:none}
+    .clock{font-size:11px}
+    header .btn{padding:6px 9px;font-size:11px}
+    .tabbar{padding:12px 12px 0;gap:5px}
+    .tab{padding:9px 13px;font-size:12px}
+    main{padding:14px 12px 48px}
+    .summary{gap:10px;margin-bottom:16px}
+    .stat{padding:11px 12px;border-radius:12px}
+    .stat .v{font-size:20px}
+    .stat .k{font-size:10px}
+    .grid{gap:14px}
+    .card{padding:14px;border-radius:14px}
+    .chead{flex-wrap:wrap;gap:8px}
+    .tkr,.price{font-size:19px}
+    .banner{font-size:12px;padding:8px 10px}
+    .flowrow{font-size:11px;gap:8px}
+    .flowrow .lbl{width:92px}
+    .flowrow .num{width:56px}
+    .pos .row{font-size:12px}
+    .targets{flex-wrap:wrap}
+    .tlog{padding:14px;overflow-x:auto}
+    .tlog h3{flex-wrap:wrap;gap:8px}
+    .tlog table{min-width:560px}
+  }
+  /* small phones */
+  @media(max-width:380px){
+    .summary{grid-template-columns:1fr 1fr;gap:8px}
+    .stat .v{font-size:18px}
+    .tkr,.price{font-size:17px}
+  }
   /* ticker card */
   .card{background:linear-gradient(180deg,var(--panel) 0%,#0a1019 100%);
     border:1px solid var(--line);border-radius:16px;padding:18px;position:relative;overflow:hidden}
@@ -317,12 +354,13 @@ function position(t){
     return '';
   }
   const cls=t.pnl>=0?'pnl-pos':'pnl-neg', lv=t.levels;
+  const be=p.breakeven_armed?` <span class="pill2 pill-be">BE STOP @ ${fmt(p.entry_price)}</span>`:'';
   return `<div class="pos">
-    <div class="row"><span>Contract</span><span class="mono">${p.contract_symbol}</span></div>
+    <div class="row"><span>Contract</span><span class="mono">${p.contract_symbol}${be}</span></div>
     <div class="row"><span>Strike / Qty</span><span class="mono">${fmt(p.strike)} × ${p.qty}</span></div>
     <div class="row"><span>Entry → Now</span><span class="mono">${fmt(p.entry_price)} → ${fmt(p.current_price)}</span></div>
     <div class="row"><span>P&amp;L</span><span class="mono ${cls}">${money(t.pnl)} (${fmt(t.pnl_pct,1)}%)</span></div>
-    ${lv?`<div class="targets">Exit: top <b>${fmt(lv.top)}</b> (long·flashing) · mid <b>${fmt(lv.mid)}</b> (downgrade) · stop&lt; <b>${fmt(lv.lower)}</b></div>`:''}
+    ${lv?`<div class="targets">Exit: top <b>${fmt(lv.top)}</b> · mid <b>${fmt(lv.mid)}</b> (downgrade) · stop&lt; <b>${fmt(lv.lower)}</b>${p.breakeven_armed?` · <b>breakeven ${fmt(p.entry_price)}</b>`:''}</div>`:''}
   </div>`;
 }
 

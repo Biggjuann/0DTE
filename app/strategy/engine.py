@@ -240,8 +240,19 @@ class Engine:
                     st.state = PositionState.ARMED
         else:
             self._mark_position(st)
+            pos = st.position
             if mm.status is MMStatus.LONG:
                 st.saw_long_in_trade = True
+
+            # Arm a breakeven stop once we've reached +BREAKEVEN_ARM_PROFIT
+            # (default +100%, i.e. the premium has doubled).
+            arm = settings.breakeven_arm_profit
+            if (arm > 0 and not pos.breakeven_armed and pos.entry_price > 0
+                    and pos.current_price >= pos.entry_price * (1 + arm)):
+                pos.breakeven_armed = True
+                st.log_event(f"+{arm*100:.0f}% profit (premium {pos.current_price:.2f} "
+                             f"≥ {pos.entry_price*(1+arm):.2f}) — stop moved to breakeven "
+                             f"{pos.entry_price:.2f}")
 
             reason = exit_type = None
             if not approved:
@@ -251,6 +262,11 @@ class Engine:
                 # Stop: price broke below the put-wall (lower) level.
                 exit_type = "STOP"
                 reason = (f"STOP — price {price:.2f} below put wall {lv.lower:.2f}")
+            elif pos.breakeven_armed and pos.current_price <= pos.entry_price:
+                # Breakeven stop: premium round-tripped back to entry after +100%.
+                exit_type = "BREAKEVEN"
+                reason = (f"BREAKEVEN — premium {pos.current_price:.2f} back to entry "
+                          f"{pos.entry_price:.2f} after +{arm*100:.0f}%")
             elif (mm.status is MMStatus.CAUTIOUS_LONG and st.saw_long_in_trade
                   and price >= lv.mid - prox):
                 # Mid take-profit ONLY on a genuine long -> cautious-long

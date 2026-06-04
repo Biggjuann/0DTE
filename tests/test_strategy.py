@@ -53,6 +53,7 @@ def make_engine(p):
     settings.rth_only = False   # mechanics tests run regardless of wall-clock time
     settings.stop_cooldown_seconds = 0   # off unless a test enables it
     settings.rearm_distance = 0.0        # 0 = use proximity
+    settings.breakeven_arm_profit = 1.0  # arm BE stop at +100%
     settings.proximity = 1.0
     settings.contracts = 1
     settings.strike_offset = 1.0
@@ -259,6 +260,43 @@ def test_wide_rearm_distance_prevents_rearm():
     p.price = 527.0; eng._tick()                       # within band -> NOT re-armed
     p.price = 525.0; eng._tick()                       # re-touch wall
     assert st(eng).position is None, "wide re-arm band should suppress the re-touch"
+
+
+def test_breakeven_arms_at_100pct_and_stops_at_entry():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0   # enter (strike 533)
+    eng = make_engine(p)
+    settings.breakeven_arm_profit = 1.0
+    eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    entry = st(eng).position.entry_price                              # 1.30 (ask)
+    p.price = 535.0; eng._tick()                                      # premium ~3.0 = +130%
+    assert st(eng).position.breakeven_armed, "must arm BE once premium doubles"
+    p.price = 533.0; eng._tick()                                      # premium ~1.0 <= entry
+    assert st(eng).position is None, "premium back to entry after +100% -> breakeven exit"
+    assert "BREAKEVEN" in st(eng).last_event
+    assert entry == 1.30
+
+
+def test_breakeven_not_armed_below_threshold():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    eng = make_engine(p)
+    settings.breakeven_arm_profit = 1.0
+    eng._tick()
+    p.price = 534.0; eng._tick()                                      # premium ~2.0 < 2.6 (=2x)
+    assert not st(eng).position.breakeven_armed
+    p.price = 533.0; eng._tick()                                      # back to entry, but not armed
+    assert st(eng).position is not None, "no breakeven exit until it was armed at +100%"
+
+
+def test_breakeven_disabled_when_zero():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    eng = make_engine(p)
+    settings.breakeven_arm_profit = 0.0                              # disabled
+    eng._tick()
+    p.price = 535.0; eng._tick()                                      # +130%
+    assert not st(eng).position.breakeven_armed
+    p.price = 533.0; eng._tick()
+    assert st(eng).position is not None, "BE disabled -> no breakeven stop"
 
 
 if __name__ == "__main__":

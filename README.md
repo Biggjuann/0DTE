@@ -69,6 +69,14 @@ open trade; a trade's scale/target/stop plan is additionally locked at entry.
   a stale book can't fabricate a loss; and a `PIVOT_MIN_HOLD_SECONDS` window plus
   one-structural-action-per-tick prevent enter-and-flatten on the same spike.
 
+## Breakeven stop (gamma strategy)
+
+Once an open call reaches **+`BREAKEVEN_ARM_PROFIT`** (default **+100%**, i.e. the
+premium doubles), a **breakeven stop** is armed: if the premium later round-trips
+back to the entry price it exits flat (`BREAKEVEN`) instead of giving the gain
+back. Set `BREAKEVEN_ARM_PROFIT=0` to disable. The position card shows a
+**BE STOP @ <entry>** badge once armed.
+
 ## Anti-whipsaw (gamma strategy)
 
 A price hovering right at the put wall used to churn enter→stop→re-enter. Two
