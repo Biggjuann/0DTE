@@ -47,7 +47,9 @@ The `$1` band, contract count, tickers and poll cadences are all configurable.
 ## Strategy 2 — Person's Pivots (second tab)
 
 A VIX-gated mean-reversion strategy on **Person's pivots** (computed from the
-prior session's OHLC: `PP=(H+L+C)/3`, `R1=2PP−L`, `S1=2PP−H`, …).
+prior session's OHLC: `PP=(H+L+C)/3`, `R1=2PP−L`, `S1=2PP−H`, …). Levels are
+**frozen on the first fetch of the trading day** so they never drift under an
+open trade; a trade's scale/target/stop plan is additionally locked at entry.
 
 - **Regime** by VIX vs its own daily pivot: VIX **above** its PP → **bearish**
   (shorts); VIX **below** → **bullish** (longs).

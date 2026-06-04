@@ -178,6 +178,22 @@ def test_scale_uses_locked_entry_pivot_not_drifting_live():
         "scale must fire at the locked entry PP, not the drifted live PP"
 
 
+def test_pivots_frozen_for_session():
+    """Pivots are computed once per ET day and held, even if the source drifts."""
+    from app.clients.pivots import PivotsProvider
+
+    class Src:
+        def __init__(self): self.o = {"high": 746.41, "low": 739.2, "close": 746.21}
+        def get_prior_day_ohlc(self, t): return self.o
+
+    src = Src()
+    pp = PivotsProvider(src)
+    a = pp.get_pivots("QQQ")
+    src.o = {"high": 800.0, "low": 700.0, "close": 750.0}   # source revises intraday
+    b = pp.get_pivots("QQQ")
+    assert b.pp == a.pp and b.r1 == a.r1 and b.s1 == a.s1, "pivots must be frozen for the session"
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
