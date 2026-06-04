@@ -162,6 +162,22 @@ def test_one_action_per_tick_scale_then_target():
     assert stt(eng).position is None
 
 
+def test_scale_uses_locked_entry_pivot_not_drifting_live():
+    """The scale must trigger at the entry-time PP, not the live (drifting) PP.
+    Live daily pivots jitter as prior-day OHLC settles; the trade plan is locked."""
+    p = FakePivot(); p.price = 748.5                  # bearish -> SHORT, pos.pp ~743.94
+    eng = make_engine(p); eng._tick()
+    pos = stt(eng).position
+    assert pos is not None and not pos.scaled
+    # Simulate the live pivots drifting well below the entry plan.
+    stt(eng).pivots.pp = pos.pp - 5.0
+    # Price dips just past the ENTRY pp but stays above the drifted live pp.
+    p.price = pos.pp - 0.1
+    eng._tick()
+    assert stt(eng).position is not None and stt(eng).position.scaled, \
+        "scale must fire at the locked entry PP, not the drifted live PP"
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

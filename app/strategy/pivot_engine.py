@@ -288,7 +288,6 @@ class PivotEngine:
         c = self.providers.market.get_contract(pos.contract_symbol)
         pos.current_price = self._mark(pos, c, under)
         price = under
-        pv = st.pivots
 
         # 0) Let a fresh fill breathe — never enter and fully exit on one spike.
         if time.time() - pos.entry_time < settings.pivot_min_hold_seconds:
@@ -301,13 +300,16 @@ class PivotEngine:
             return
 
         # 2) Scale 50% at the pivot, then move stop to breakeven.
-        #    One structural action per tick: after scaling we return and let the
-        #    runner be managed on the next tick (no same-tick scale+target).
-        reached_pivot = (price <= pv.pp) if pos.direction == "SHORT" else (price >= pv.pp)
+        #    The plan is LOCKED at entry: scale at pos.pp and run to pos.target —
+        #    NOT the live pivots, which drift intraday as the prior-day OHLC
+        #    settles. (Using the live PP once let a drifting level sit above price
+        #    during a run-up so the scale never fired.) One structural action per
+        #    tick: after scaling we return and manage the runner next tick.
+        reached_pivot = (price <= pos.pp) if pos.direction == "SHORT" else (price >= pos.pp)
         if reached_pivot and not pos.scaled:
             half = max(1, int(round(pos.qty * settings.pivot_scale_pct)))
             half = min(half, pos.remaining_qty)
-            self._close(st, half, "SCALE", f"50% off at pivot {pv.pp:.2f}", keep_open=True)
+            self._close(st, half, "SCALE", f"50% off at pivot {pos.pp:.2f}", keep_open=True)
             pos.scaled = True
             pos.breakeven = True
             pos.stop_premium = round(pos.entry_price, 2)  # breakeven
