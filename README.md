@@ -67,6 +67,19 @@ prior session's OHLC: `PP=(H+L+C)/3`, `R1=2PP−L`, `S1=2PP−H`, …).
   a stale book can't fabricate a loss; and a `PIVOT_MIN_HOLD_SECONDS` window plus
   one-structural-action-per-tick prevent enter-and-flatten on the same spike.
 
+## Regular-trading-hours gate (both strategies)
+
+These are **0DTE** options, so **all** activity is restricted to the US equity
+regular session (`America/New_York`, holidays aside):
+
+- **No entries** outside the session — pre-market, after-hours, or weekends.
+- **No new entries** after `SESSION_NO_ENTRY` (default 15:45 ET).
+- Any open position is **flattened** by `SESSION_FLATTEN` (default 15:55 ET) —
+  a same-day-expiry option is never held overnight.
+- Configurable via `RTH_ONLY` / `SESSION_OPEN` / `SESSION_CLOSE` /
+  `SESSION_NO_ENTRY` / `SESSION_FLATTEN`. Set `RTH_ONLY=false` only for off-hours
+  mock demos. The dashboard header shows the live session phase.
+
 ## Dashboard
 
 `GET /` serves a self-contained dark "trader" dashboard with **two tabs**

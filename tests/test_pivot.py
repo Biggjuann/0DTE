@@ -65,6 +65,7 @@ class FakePivot:
 
 def make_engine(p):
     settings.tickers = ["QQQ"]
+    settings.rth_only = False   # guard tests run regardless of wall-clock time
     settings.pivot_contracts = 4
     settings.pivot_proximity = 0.5
     settings.pivot_stop_pct = 0.5

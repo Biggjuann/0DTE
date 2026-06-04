@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from app import market_hours
 from app.clients.factory import Providers, build_providers
 from app.config import settings
 from app.models import (Levels, MMSignal, MMStatus, OptionContract, Position,
@@ -162,6 +163,22 @@ class Engine:
         approved = mm.status.approves_entry
         price = q.last
         prox = settings.proximity
+
+        # RTH gate: 0DTE trades only during the regular session. Outside it,
+        # flatten any open position and never enter.
+        ph = market_hours.phase()
+        if market_hours.should_flatten(ph):
+            if st.position:
+                why = "session close" if ph == market_hours.FLATTEN else "outside RTH"
+                self._exit(st, f"{why} — flatten 0DTE ({market_hours.label()})", "EOD")
+            else:
+                msg = f"market closed ({market_hours.label()}) — idle"
+                if st.last_event != msg:
+                    st.log_event(msg)
+                st.state = PositionState.DISABLED
+            st.prev_status = mm.status
+            return
+        entries_open = market_hours.entries_allowed(ph)  # False during 'late'
         # The channel must be properly ordered (lower < mid < top). MIN_CHANNEL_GAP
         # (default 0) can additionally require separation between the legs.
         gap = settings.min_channel_gap
@@ -192,9 +209,14 @@ class Engine:
                 # (lower) AND stance is long or cautious-long. We require price at
                 # or above the wall so we don't enter into an immediate stop.
                 at_putwall = lv.lower <= price <= lv.lower + prox
-                if at_putwall and st.can_enter:
+                if at_putwall and st.can_enter and entries_open:
                     self._enter(st)
                     st.can_enter = False
+                elif at_putwall and st.can_enter and not entries_open:
+                    msg = f"signal at put wall but late session ({market_hours.label()}) — no new entries"
+                    if st.last_event != msg:
+                        st.log_event(msg)
+                    st.state = PositionState.ARMED
                 else:
                     if st.state != PositionState.ARMED:
                         if price < lv.lower:
@@ -349,6 +371,7 @@ class Engine:
                 "running": self.running,
                 "auto_trade": self.auto_trade,
                 "contracts": settings.contracts,
+                "session": market_hours.info(),
                 "proximity": settings.proximity,
                 "strike_offset": settings.strike_offset,
                 "market_data_provider": (settings.market_data_provider if self.providers.mode == "live" else "mock"),

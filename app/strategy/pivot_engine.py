@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from app import market_hours
 from app.clients.factory import PivotProviders, build_pivot_providers
 from app.config import settings
 from app.models import OptionContract, PivotLevels, PivotPosition, Quote, TradeRecord, to_jsonable
@@ -159,11 +160,24 @@ class PivotEngine:
 
     # --- state machine -------------------------------------------------------
     def _evaluate(self, st: PivotTickerState) -> None:
+        # RTH gate: 0DTE trades only during the regular session. Outside it,
+        # flatten any open position and never enter.
+        ph = market_hours.phase()
+        if market_hours.should_flatten(ph):
+            if st.position:
+                why = "session close" if ph == market_hours.FLATTEN else "outside RTH"
+                self._close(st, st.position.remaining_qty, "EOD",
+                            f"{why} — flatten 0DTE ({market_hours.label()})")
+            if not st.position:
+                self._session_idle(st)
+            return
+
         if not (st.pivots and st.quote and self.regime and st.last_good_price):
             return
         pv, price = st.pivots, st.last_good_price   # decide on the validated price
         prox = settings.pivot_proximity
         st.pivots.spot = st.quote.last              # display the live tick
+        entries_open = market_hours.entries_allowed(ph)  # False during 'late'
 
         if st.position is None:
             if self.regime == "bearish":
@@ -171,8 +185,11 @@ class PivotEngine:
                 if price < pv.r1 - prox:
                     st.can_enter = True
                 in_zone = price >= pv.r1 - prox
-                if in_zone and st.can_enter:
+                if in_zone and st.can_enter and entries_open:
                     self._enter(st, "SHORT")
+                elif in_zone and st.can_enter:
+                    self._arm(st, f"SHORT signal at R1 but late session "
+                                  f"({market_hours.label()}) — no new entries")
                 else:
                     self._arm(st, f"bearish (VIX {self.vix_last} > {self.vix_pp}); "
                                   f"price {price:.2f} not at R1 {pv.r1:.2f}")
@@ -181,8 +198,11 @@ class PivotEngine:
                 if price > pv.s1 + prox:
                     st.can_enter = True
                 in_zone = price <= pv.s1 + prox
-                if in_zone and st.can_enter:
+                if in_zone and st.can_enter and entries_open:
                     self._enter(st, "LONG")
+                elif in_zone and st.can_enter:
+                    self._arm(st, f"LONG signal at S1 but late session "
+                                  f"({market_hours.label()}) — no new entries")
                 else:
                     self._arm(st, f"bullish (VIX {self.vix_last} <= {self.vix_pp}); "
                                   f"price {price:.2f} not at S1 {pv.s1:.2f}")
@@ -193,6 +213,11 @@ class PivotEngine:
         if st.state != "armed":
             st.log_event(f"ARMED — {why}")
         st.state = "armed"
+
+    def _session_idle(self, st: PivotTickerState) -> None:
+        if st.state != "closed":
+            st.log_event(f"market closed ({market_hours.label()}) — idle")
+        st.state = "closed"
 
     # --- entries -------------------------------------------------------------
     def _pick(self, ticker: str, option_type: str, target: float) -> Optional[OptionContract]:
@@ -360,6 +385,7 @@ class PivotEngine:
                 "running": self.running,
                 "auto_trade": self.auto_trade,
                 "contracts": settings.pivot_contracts,
+                "session": market_hours.info(),
                 "vix_symbol": self.providers.vix_symbol,
                 "vix_last": self.vix_last,
                 "vix_pp": self.vix_pp,

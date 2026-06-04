@@ -30,6 +30,9 @@
   .badge.mock{color:var(--blue);border-color:rgba(56,189,248,.35)}
   .badge.dry{color:var(--amber);border-color:rgba(251,191,36,.35)}
   .badge.armed-real{color:#170707;background:var(--red);border-color:transparent}
+  .badge.sess-open{color:#04140f;background:var(--green);border-color:transparent}
+  .badge.sess-soon{color:var(--amber);border-color:rgba(251,191,36,.35)}
+  .badge.sess-closed{color:var(--muted);border-color:var(--line)}
   .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;background:var(--dim)}
   .dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
   .spacer{flex:1}
@@ -146,6 +149,7 @@
   <div class="brand">0<b>DTE</b></div>
   <span class="badge" id="modeBadge">—</span>
   <span class="badge" id="dryBadge">—</span>
+  <span class="badge" id="sessionBadge" title="0DTE trade only during the regular session">—</span>
   <span class="clock"><span class="dot" id="runDot"></span><span id="runTxt">—</span></span>
   <span class="clock" id="srcTxt" style="font-size:11px"></span>
   <div class="spacer"></div>
@@ -238,6 +242,16 @@ function updateHeader(){
   document.getElementById('runDot').className='dot'+(s.running?' on':'');
   document.getElementById('runTxt').textContent=s.running?'engine running':'stopped';
   document.getElementById('autoBtn').textContent='Auto: '+(s.auto_trade?'ON':'OFF');
+  const sb=document.getElementById('sessionBadge'), se=s.session;
+  if(se){
+    const ph=se.phase;
+    const cls=ph==='open'?'sess-open':(ph==='late'||ph==='flatten')?'sess-soon':'sess-closed';
+    const txt=ph==='open'?'RTH OPEN':ph==='late'?'RTH · NO ENTRY':ph==='flatten'?'RTH · FLATTEN':
+              ph==='pre'?'PRE-MARKET':'CLOSED';
+    sb.className='badge '+cls;
+    sb.textContent=`${txt} ${se.label}`;
+    sb.style.display=se.rth_only?'':'none';
+  } else sb.style.display='none';
 }
 
 function statusBanner(mm){

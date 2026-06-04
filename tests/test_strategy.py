@@ -50,6 +50,7 @@ class ScriptProvider:
 
 def make_engine(p):
     settings.tickers = ["QQQ"]
+    settings.rth_only = False   # mechanics tests run regardless of wall-clock time
     settings.proximity = 1.0
     settings.contracts = 1
     settings.strike_offset = 1.0

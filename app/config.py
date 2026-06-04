@@ -44,6 +44,14 @@ class Settings:
     tickers: List[str] = field(default_factory=lambda: _list("TICKERS", ["QQQ", "SPY"]))
 
     dry_run: bool = field(default_factory=lambda: _bool("DRY_RUN", True))
+    # ----- Regular-trading-hours gate (shared by both strategies) ------------
+    # 0DTE options trade RTH only: no entries outside the session, and any open
+    # position is flattened before the close. All times are US/Eastern.
+    rth_only: bool = field(default_factory=lambda: _bool("RTH_ONLY", True))
+    session_open: str = field(default_factory=lambda: os.getenv("SESSION_OPEN", "09:30"))
+    session_close: str = field(default_factory=lambda: os.getenv("SESSION_CLOSE", "16:00"))
+    session_no_entry: str = field(default_factory=lambda: os.getenv("SESSION_NO_ENTRY", "15:45"))
+    session_flatten: str = field(default_factory=lambda: os.getenv("SESSION_FLATTEN", "15:55"))
     contracts: int = field(default_factory=lambda: _int("CONTRACTS", 1))
     proximity: float = field(default_factory=lambda: _float("PROXIMITY", 1.0))
     # 0DTE call strike = mid level + this offset (dollars). Spec: $1 above mid.
