@@ -179,37 +179,37 @@ class PivotEngine:
         if not (st.pivots and st.quote and self.regime and st.last_good_price):
             return
         pv, price = st.pivots, st.last_good_price   # validated live price
-        prox = settings.pivot_proximity
+        half = settings.pivot_zone_half(st.ticker)  # each level is a zone ±half wide
         st.pivots.spot = st.quote.last
         entries_open = market_hours.entries_allowed(ph)  # False during 'late'
 
         if st.position is None:
             if self.regime == "bearish":
-                # SHORT setup: enter when price reaches R1.
-                if price < pv.r1 - prox:
+                # SHORT setup: enter when price enters the R1 zone.
+                if price < pv.r1 - half:
                     st.can_enter = True
-                in_zone = price >= pv.r1 - prox
+                in_zone = price >= pv.r1 - half
                 if in_zone and st.can_enter and entries_open:
                     self._enter(st, "SHORT")
                 elif in_zone and st.can_enter:
-                    self._arm(st, f"SHORT signal at R1 but late session "
+                    self._arm(st, f"SHORT signal at R1 zone but late session "
                                   f"({market_hours.label()}) — no new entries")
                 else:
                     self._arm(st, f"bearish (VIX {self.vix_last} > {self.vix_pp}); "
-                                  f"price {price:.2f} not at R1 {pv.r1:.2f}")
+                                  f"price {price:.2f} not in R1 zone {pv.r1:.2f}±{half:g}")
             else:
-                # LONG setup: enter when price reaches S1.
-                if price > pv.s1 + prox:
+                # LONG setup: enter when price enters the S1 zone.
+                if price > pv.s1 + half:
                     st.can_enter = True
-                in_zone = price <= pv.s1 + prox
+                in_zone = price <= pv.s1 + half
                 if in_zone and st.can_enter and entries_open:
                     self._enter(st, "LONG")
                 elif in_zone and st.can_enter:
-                    self._arm(st, f"LONG signal at S1 but late session "
+                    self._arm(st, f"LONG signal at S1 zone but late session "
                                   f"({market_hours.label()}) — no new entries")
                 else:
                     self._arm(st, f"bullish (VIX {self.vix_last} <= {self.vix_pp}); "
-                                  f"price {price:.2f} not at S1 {pv.s1:.2f}")
+                                  f"price {price:.2f} not in S1 zone {pv.s1:.2f}±{half:g}")
         else:
             self._manage(st)
 
@@ -292,6 +292,7 @@ class PivotEngine:
         c = self.providers.market.get_contract(pos.contract_symbol)
         pos.current_price = self._mark(pos, c, under)
         price = under
+        half = settings.pivot_zone_half(st.ticker)   # levels are zones ±half wide
 
         # 0) Let a fresh fill breathe — never enter and fully exit on one spike.
         if time.time() - pos.entry_time < settings.pivot_min_hold_seconds:
@@ -309,7 +310,7 @@ class PivotEngine:
         #    settles. (Using the live PP once let a drifting level sit above price
         #    during a run-up so the scale never fired.) One structural action per
         #    tick: after scaling we return and manage the runner next tick.
-        reached_pivot = (price <= pos.pp) if pos.direction == "SHORT" else (price >= pos.pp)
+        reached_pivot = (price <= pos.pp + half) if pos.direction == "SHORT" else (price >= pos.pp - half)
         if reached_pivot and not pos.scaled:
             half = max(1, int(round(pos.qty * settings.pivot_scale_pct)))
             half = min(half, pos.remaining_qty)
@@ -323,8 +324,8 @@ class PivotEngine:
                 st.state = "armed"
             return
 
-        # 3) Final target: S1 (short) / R1 (long).
-        hit_target = (price <= pos.target) if pos.direction == "SHORT" else (price >= pos.target)
+        # 3) Final target: S1 (short) / R1 (long) — enter the target zone.
+        hit_target = (price <= pos.target + half) if pos.direction == "SHORT" else (price >= pos.target - half)
         if hit_target:
             tlabel = "S1" if pos.direction == "SHORT" else "R1"
             self._close(st, pos.remaining_qty, "TARGET", f"target {tlabel} {pos.target:.2f}")
@@ -374,6 +375,7 @@ class PivotEngine:
                 tickers.append({
                     "ticker": st.ticker,
                     "state": st.state,
+                    "zone_width": settings.pivot_zone_width(st.ticker),
                     "pivots": to_jsonable(st.pivots) if st.pivots else None,
                     "quote": to_jsonable(st.quote) if st.quote else None,
                     "direction": (self.regime == "bearish" and "SHORT") or

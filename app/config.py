@@ -38,6 +38,20 @@ def _list(name: str, default: List[str]) -> List[str]:
     return [x.strip().upper() for x in raw.split(",") if x.strip()]
 
 
+def _zone_map(name: str, default: dict) -> dict:
+    """Parse 'SPY:0.5,QQQ:0.75' into {ticker: zone_width}."""
+    out = dict(default)
+    raw = os.getenv(name, "")
+    for part in raw.split(","):
+        if ":" in part:
+            k, v = part.split(":", 1)
+            try:
+                out[k.strip().upper()] = float(v)
+            except ValueError:
+                pass
+    return out
+
+
 @dataclass
 class Settings:
     data_mode: str = field(default_factory=lambda: os.getenv("DATA_MODE", "mock").lower())
@@ -99,8 +113,12 @@ class Settings:
 
     # ----- Person's Pivots strategy (second tab) -----------------------------
     pivot_contracts: int = field(default_factory=lambda: _int("PIVOT_CONTRACTS", 4))
-    # Touch band for reaching R1 / S1 / PP / target (dollars).
+    # Touch band for reaching R1 / S1 / PP / target (dollars) — fallback when a
+    # ticker has no zone configured below.
     pivot_proximity: float = field(default_factory=lambda: _float("PIVOT_PROXIMITY", 0.5))
+    # Each pivot level is a ZONE this many dollars wide, centered on the line.
+    # A level is "reached" when price enters its zone (within width/2). Per ticker.
+    pivot_zones: dict = field(default_factory=lambda: _zone_map("PIVOT_ZONES", {"SPY": 0.50, "QQQ": 0.75}))
     # Initial stop = this fraction of the entry premium lost (0.5 = 50%).
     pivot_stop_pct: float = field(default_factory=lambda: _float("PIVOT_STOP_PCT", 0.5))
     # Fraction of the lot scaled out at the pivot (0.5 = 50%).
@@ -132,6 +150,15 @@ class Settings:
     def token_share_key(self) -> str:
         """Bearer key for the shared token (SCHWAB_TOKEN_SHARE_KEY, MM_API_KEY fallback)."""
         return self.schwab_token_share_key or self.mm_api_key
+
+    def pivot_zone_width(self, ticker: str) -> float:
+        """Full zone width (dollars) for a ticker; falls back to 2×proximity."""
+        w = self.pivot_zones.get(ticker.upper())
+        return w if w is not None else self.pivot_proximity * 2.0
+
+    def pivot_zone_half(self, ticker: str) -> float:
+        """Half-width: a level is reached when price is within this of the line."""
+        return self.pivot_zone_width(ticker) / 2.0
 
 
 settings = Settings()

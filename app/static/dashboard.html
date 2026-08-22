@@ -57,6 +57,13 @@
   .rung.res{border-color:rgba(248,113,113,.45)} .rlab.res b{color:var(--red)}
   .rung.piv{border-color:rgba(167,139,250,.7)} .rlab.piv b{color:var(--violet)}
   .rung.sup{border-color:rgba(52,211,153,.45)} .rlab.sup b{color:var(--green)}
+  /* pivot ZONES (bands centered on each level) */
+  .zone{position:absolute;left:0;right:0;border-radius:3px;pointer-events:none}
+  .zone.res{background:rgba(248,113,113,.14);border:1px solid rgba(248,113,113,.28)}
+  .zone.piv{background:rgba(167,139,250,.18);border:1px solid rgba(167,139,250,.4)}
+  .zone.sup{background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.28)}
+  .znote{position:absolute;left:6px;bottom:2px;font-size:9px;letter-spacing:.3px;
+    color:var(--dim);text-transform:uppercase}
   .rlab.key b{text-shadow:0 0 8px currentColor}
   .pill2{font-size:10px;font-weight:800;letter-spacing:.5px;padding:2px 7px;border-radius:6px;margin-left:6px}
   .pill-short{background:rgba(248,113,113,.15);color:var(--red)}
@@ -431,22 +438,30 @@ function pivotRegime(s){
     el.textContent=`BULLISH — VIX ${fmt(s.vix_last)} ≤ pivot ${fmt(s.vix_pp)}  ·  longs at S1 (buy calls)`;}
 }
 
-function pivotLadder(pv,price){
+function pivotLadder(pv,price,zoneW){
   if(!pv) return '<div class="empty">awaiting pivots…</div>';
+  const half=(zoneW||0)/2;
   const items=[{v:pv.r3,cls:'res',lab:'R3'},{v:pv.r2,cls:'res',lab:'R2'},{v:pv.r1,cls:'res key',lab:'R1'},
     {v:pv.pp,cls:'piv key',lab:'PP'},
     {v:pv.s1,cls:'sup key',lab:'S1'},{v:pv.s2,cls:'sup',lab:'S2'},{v:pv.s3,cls:'sup',lab:'S3'}];
-  const vals=items.map(i=>i.v).concat(price!=null?[price]:[]);
+  // include zone edges in the range so bands aren't clipped
+  const vals=items.flatMap(i=>[i.v-half,i.v+half]).concat(price!=null?[price]:[]);
   const pad=(Math.max(...vals)-Math.min(...vals))*0.08||1;
   const min=Math.min(...vals)-pad,max=Math.max(...vals)+pad;
-  const pct=v=>Math.max(2,Math.min(98,(v-min)/(max-min)*100));
+  const pct=v=>Math.max(1,Math.min(99,(v-min)/(max-min)*100));
+  // shaded zone bands (price ±half), centered on each level
+  const zones=half>0?items.map(i=>{
+    const b=pct(i.v-half),t=pct(i.v+half);
+    return `<div class="zone ${i.cls}" style="bottom:${b}%;height:${Math.max(0.8,t-b)}%"></div>`;
+  }).join(''):'';
   const lines=items.map(i=>`<div class="rung ${i.cls}" style="bottom:${pct(i.v)}%"></div>`).join('');
   const labs=items.map(i=>({...i,pos:pct(i.v)})).sort((a,b)=>a.pos-b.pos);
   const GAP=11;
   for(let j=1;j<labs.length;j++) if(labs[j].pos-labs[j-1].pos<GAP) labs[j].pos=labs[j-1].pos+GAP;
   const labels=labs.map(i=>`<div class="rlab ${i.cls}" style="bottom:${i.pos}%"><span>${i.lab}</span><b class="mono">${fmt(i.v)}</b></div>`).join('');
   const px=price!=null?`<div class="pxmark" style="bottom:${pct(price)}%"><span class="tag mono">${fmt(price)}</span></div>`:'';
-  return `<div class="ladder" style="height:230px">${lines}${labels}${px}</div>`;
+  const zn=half>0?`<div class="znote">zones ${fmt(zoneW)} wide</div>`:'';
+  return `<div class="ladder" style="height:230px">${zones}${lines}${labels}${px}${zn}</div>`;
 }
 
 function pivotPosition(t){
@@ -480,7 +495,7 @@ function pcard(t){
       <span class="price mono">${t.quote?fmt(t.quote.last):'—'}</span>
       ${freshness(t)}
     </div>
-    ${pivotLadder(t.pivots,t.quote?t.quote.last:null)}
+    ${pivotLadder(t.pivots,t.quote?t.quote.last:null,t.zone_width)}
     ${pivotPosition(t)}
     <div class="events">${(t.events||[]).map(e=>`<div><span class="mono">${e.slice(0,8)}</span> ${e.slice(8)}</div>`).join('')||'<div class="muted">no events yet</div>'}</div>
   </div>`;

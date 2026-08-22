@@ -56,6 +56,10 @@ open trade; a trade's scale/target/stop plan is additionally locked at entry.
 - **Short** (bearish): when QQQ/SPY reaches **R1** → **buy 0DTE puts** struck
   closest to **PP**. **Long** (bullish): when price reaches **S1** → **buy 0DTE
   calls** struck closest to PP.
+- **Zones, not lines**: each pivot level is a **zone** centered on the line,
+  configurable per ticker via `PIVOT_ZONES` (default **SPY $0.50**, **QQQ $0.75**
+  wide). A level is "reached" when price enters its zone (within width/2), and the
+  ladder draws the zones as shaded bands.
 - **Manage**: scale **50%** out at the **pivot (PP)**, move the stop to
   **breakeven**, run the rest to the opposite level (**S1** for shorts, **R1**
   for longs). Initial stop = **`PIVOT_STOP_PCT`** of entry premium (default 50%).

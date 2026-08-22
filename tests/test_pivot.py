@@ -71,6 +71,7 @@ def make_engine(p):
     settings.rth_only = False   # guard tests run regardless of wall-clock time
     settings.pivot_contracts = 4
     settings.pivot_proximity = 0.5
+    settings.pivot_zones = {"SPY": 0.50, "QQQ": 0.75}   # zone widths (per ticker)
     settings.pivot_stop_pct = 0.5
     settings.pivot_scale_pct = 0.5
     settings.pivot_min_hold_seconds = 0.0   # off unless a test enables it
@@ -208,6 +209,35 @@ def test_management_uses_live_last_not_lagging_minute_close():
     p.mclose = pos.pp + 3.0                            # 1-minute close still lags up high
     eng._tick()
     assert stt(eng).position.scaled, "scale must use the live last, not the lagging minute close"
+
+
+def test_zone_width_widens_entry_band():
+    """A wider zone lets price trigger further from the exact pivot line."""
+    p = FakePivot(); eng = make_engine(p)
+    settings.pivot_zones = {"QQQ": 4.0}               # half = 2.0
+    r1 = stt(eng).pivots and None                     # pivots load on tick
+    p.price = 747.0                                   # ~1.7 below R1 (748.68) -> inside zone
+    eng._tick()
+    pos = stt(eng).position
+    assert pos is not None and pos.direction == "SHORT", "wide zone should trigger inside the band"
+
+
+def test_narrow_zone_no_entry_outside_band():
+    p = FakePivot(); eng = make_engine(p)
+    settings.pivot_zones = {"QQQ": 0.2}               # half = 0.1
+    p.price = 748.3                                   # >0.1 below R1 748.68 -> not in zone
+    eng._tick()
+    assert stt(eng).position is None, "narrow zone: price outside band must not enter"
+    assert stt(eng).state == "armed"
+
+
+def test_zone_width_per_ticker_config():
+    settings.pivot_zones = {"SPY": 0.50, "QQQ": 0.75}
+    assert settings.pivot_zone_width("SPY") == 0.50 and settings.pivot_zone_half("SPY") == 0.25
+    assert settings.pivot_zone_width("QQQ") == 0.75 and settings.pivot_zone_half("QQQ") == 0.375
+    # unknown ticker falls back to 2x proximity
+    settings.pivot_proximity = 0.5
+    assert settings.pivot_zone_width("IWM") == 1.0
 
 
 if __name__ == "__main__":
