@@ -58,10 +58,11 @@ open trade.
   - **From below** (price rising into the zone) → **short**: buy **4 ATM puts**.
   - **From above** (price falling into the zone) → **long**: buy **4 ATM calls**.
 - **Scale**: once the premium is up **+50%** (`PIVOT_SCALE_PROFIT`), sell all but
-  the runner (`PIVOT_RUNNER_CONTRACTS`, default 1) and move the stop to breakeven.
+  the runner (`PIVOT_RUNNER_CONTRACTS`, default 1).
 - **Runner**: exits when price reaches the **next zone** — the next zone **down**
-  for shorts, the next zone **up** for longs. If there is no next zone, the runner
-  rides to the stop / EOD flatten.
+  for shorts, the next zone **up** for longs (or EOD flatten if there is none).
+- **No stop by default** (`PIVOT_STOP_PCT=0`): runners go zone-to-zone. Set
+  `PIVOT_STOP_PCT>0` to re-enable a premium stop that moves to breakeven on scale.
 - **Contracts** via `PIVOT_CONTRACTS` (default 4). VIX is still shown as context
   but no longer gates entries.
 - Pivot data is **Schwab-backed** (daily OHLC + VIX) regardless of

@@ -173,6 +173,23 @@ def test_scale_to_runner_at_50pct_profit():
     assert sells and sells[0][2] == 3
 
 
+def test_stop_disabled_by_default_no_breakeven():
+    p = FakePivot(); eng = make_engine(p)
+    settings.pivot_stop_pct = 0.0                   # stops OFF (the default)
+    _cross_up_into_s1(eng, p)
+    pos = stt(eng).position; entry = pos.entry_price
+    p.opt_bid, p.opt_ask, p.opt_last = entry * 1.6, entry * 1.6 + 0.1, entry * 1.6
+    eng._tick()                                     # scale to runner
+    pos = stt(eng).position
+    assert pos.scaled and pos.remaining_qty == 1
+    assert not pos.breakeven and pos.stop_premium < 0, "no stop when disabled"
+    # runner premium collapses toward zero but there is NO stop -> still open
+    p.opt_bid, p.opt_ask, p.opt_last = 0.0, 0.0, 0.02
+    p.price = 742.5                                 # still above the S2 target zone
+    eng._tick()
+    assert stt(eng).position is not None, "runner has no stop; only zones/EOD exit it"
+
+
 def test_runner_exits_at_next_zone():
     p = FakePivot(); eng = make_engine(p)
     _cross_up_into_s1(eng, p)

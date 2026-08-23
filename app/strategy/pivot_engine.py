@@ -328,9 +328,10 @@ class PivotEngine:
                             f"+{settings.pivot_scale_profit*100:.0f}% @ {pos.current_price:.2f} "
                             f"— {take} off, {pos.remaining_qty-take} runner", keep_open=True)
             pos.scaled = True
-            pos.breakeven = True
-            pos.stop_premium = round(pos.entry_price, 2)  # breakeven
-            st.log_event(f"stop moved to breakeven {pos.stop_premium:.2f}")
+            if settings.pivot_stop_pct > 0:            # breakeven only if stops are on
+                pos.breakeven = True
+                pos.stop_premium = round(pos.entry_price, 2)
+                st.log_event(f"stop moved to breakeven {pos.stop_premium:.2f}")
             if pos.remaining_qty <= 0:
                 st.position = None
                 st.state = "armed"

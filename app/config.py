@@ -119,8 +119,9 @@ class Settings:
     # Each pivot level is a ZONE this many dollars wide, centered on the line.
     # A level is "reached" when price enters its zone (within width/2). Per ticker.
     pivot_zones: dict = field(default_factory=lambda: _zone_map("PIVOT_ZONES", {"SPY": 0.50, "QQQ": 0.75}))
-    # Initial stop = this fraction of the entry premium lost (0.5 = 50%). <=0 disables.
-    pivot_stop_pct: float = field(default_factory=lambda: _float("PIVOT_STOP_PCT", 0.5))
+    # Premium stop = this fraction of the entry premium lost. Default 0 = NO stop
+    # (runners go pure zone-to-zone / EOD). Set >0 to re-enable + breakeven-on-scale.
+    pivot_stop_pct: float = field(default_factory=lambda: _float("PIVOT_STOP_PCT", 0.0))
     # Scale the lot down to the runner once premium is up this fraction (0.5 = +50%).
     pivot_scale_profit: float = field(default_factory=lambda: _float("PIVOT_SCALE_PROFIT", 0.5))
     # Contracts left as the runner after scaling (rest are sold at +profit).
