@@ -104,9 +104,10 @@ def test_pivot_no_entry_overnight():
 def test_pivot_flatten_before_close():
     settings.rth_only = True
     mh.now_et = lambda: _wed(10, 0)                 # open -> enter short
-    p = P.FakePivot(); p.price = 748.5
+    p = P.FakePivot()
     eng = P.make_engine(p); settings.rth_only = True
-    eng._tick()
+    p.price = 747.5; eng._tick()                    # below R1 zone
+    p.price = 748.5; eng._tick()                    # cross up into R1 zone -> SHORT
     assert P.stt(eng).position is not None
     mh.now_et = lambda: _wed(15, 57)               # flatten window
     eng._tick()

@@ -38,6 +38,7 @@ class PivotTickerState:
     position: Optional[PivotPosition] = None
     can_enter: bool = True           # one entry per level touch
     last_good_price: Optional[float] = None   # last validated decision price
+    prev_price: Optional[float] = None        # price on the previous tick (for zone crossing)
     quote_bad: bool = False          # currently rejecting spiked quotes
     last_event: str = "waiting for data"
     events: List[str] = field(default_factory=list)
@@ -176,42 +177,51 @@ class PivotEngine:
                 self._session_idle(st)
             return
 
-        if not (st.pivots and st.quote and self.regime and st.last_good_price):
+        if not (st.pivots and st.quote and st.last_good_price):
             return
         pv, price = st.pivots, st.last_good_price   # validated live price
         half = settings.pivot_zone_half(st.ticker)  # each level is a zone ±half wide
         st.pivots.spot = st.quote.last
         entries_open = market_hours.entries_allowed(ph)  # False during 'late'
-
-        if st.position is None:
-            if self.regime == "bearish":
-                # SHORT setup: enter when price enters the R1 zone.
-                if price < pv.r1 - half:
-                    st.can_enter = True
-                in_zone = price >= pv.r1 - half
-                if in_zone and st.can_enter and entries_open:
-                    self._enter(st, "SHORT")
-                elif in_zone and st.can_enter:
-                    self._arm(st, f"SHORT signal at R1 zone but late session "
-                                  f"({market_hours.label()}) — no new entries")
-                else:
-                    self._arm(st, f"bearish (VIX {self.vix_last} > {self.vix_pp}); "
-                                  f"price {price:.2f} not in R1 zone {pv.r1:.2f}±{half:g}")
+        prev = st.prev_price if st.prev_price is not None else price
+        try:
+            if st.position is None:
+                self._look_for_zone_entry(st, pv, price, prev, half, entries_open)
             else:
-                # LONG setup: enter when price enters the S1 zone.
-                if price > pv.s1 + half:
-                    st.can_enter = True
-                in_zone = price <= pv.s1 + half
-                if in_zone and st.can_enter and entries_open:
-                    self._enter(st, "LONG")
-                elif in_zone and st.can_enter:
-                    self._arm(st, f"LONG signal at S1 zone but late session "
-                                  f"({market_hours.label()}) — no new entries")
-                else:
-                    self._arm(st, f"bullish (VIX {self.vix_last} <= {self.vix_pp}); "
-                                  f"price {price:.2f} not in S1 zone {pv.s1:.2f}±{half:g}")
+                self._manage(st)
+        finally:
+            st.prev_price = price   # remember for next tick's crossing check
+
+    def _zones(self, pv: PivotLevels):
+        """The 7 pivot levels, ascending, as (value, label)."""
+        return sorted([(pv.s3, "S3"), (pv.s2, "S2"), (pv.s1, "S1"), (pv.pp, "PP"),
+                       (pv.r1, "R1"), (pv.r2, "R2"), (pv.r3, "R3")], key=lambda z: z[0])
+
+    def _look_for_zone_entry(self, st, pv, price, prev, half, entries_open):
+        zones = self._zones(pv)
+        # Which zone is price currently inside? (nearest line if several overlap)
+        inside = [(i, v, lab) for i, (v, lab) in enumerate(zones)
+                  if v - half <= price <= v + half]
+        if not inside:
+            self._arm(st, f"price {price:.2f} between zones — waiting for a zone touch")
+            return
+        i, lvl, lab = min(inside, key=lambda z: abs(price - z[1]))
+        # Direction is set by how we ENTERED the zone this tick.
+        if prev < lvl - half:            # came up into the zone from below -> fade SHORT (puts)
+            direction, ot = "SHORT", "PUT"
+            tgt = zones[i - 1] if i > 0 else None            # runner exits at next zone DOWN
+        elif prev > lvl + half:          # came down into the zone from above -> fade LONG (calls)
+            direction, ot = "LONG", "CALL"
+            tgt = zones[i + 1] if i < len(zones) - 1 else None  # runner exits at next zone UP
         else:
-            self._manage(st)
+            # already sitting in the zone (no fresh crossing) — do not re-enter
+            self._arm(st, f"in {lab} zone {lvl:.2f} (no fresh touch) — standing by")
+            return
+        if not entries_open:
+            self._arm(st, f"{direction} touch at {lab} but late session "
+                          f"({market_hours.label()}) — no new entries")
+            return
+        self._enter(st, direction, ot, lvl, lab, tgt)
 
     def _arm(self, st: PivotTickerState, why: str) -> None:
         if st.state != "armed":
@@ -232,16 +242,19 @@ class PivotEngine:
             return None
         return min(chain, key=lambda c: abs(c.strike - target))
 
-    def _enter(self, st: PivotTickerState, direction: str) -> None:
-        pv = st.pivots
-        option_type = "PUT" if direction == "SHORT" else "CALL"
-        target = pv.s1 if direction == "SHORT" else pv.r1
+    def _enter(self, st: PivotTickerState, direction: str, option_type: str,
+               level: float, level_label: str, target) -> None:
+        under = st.last_good_price
+        tgt_val = target[0] if target else None
+        tgt_lab = target[1] if target else "—"
+        approach = "from below" if direction == "SHORT" else "from above"
         if not self.auto_trade:
-            st.log_event(f"{direction} signal at {'R1' if direction=='SHORT' else 'S1'} "
+            st.log_event(f"{direction} touch {level_label} {level:.2f} ({approach}) "
                          f"(auto-trade OFF — not sent)")
             st.state = "armed"
             return
-        contract = self._pick(st.ticker, option_type, pv.pp)
+        # ATM: strike closest to the current underlying.
+        contract = self._pick(st.ticker, option_type, under)
         if not contract:
             st.log_event("ENTRY blocked — no 0DTE chain")
             st.state = "armed"
@@ -256,21 +269,22 @@ class PivotEngine:
             st.log_event(f"ENTRY rejected: {fill.message}")
             st.state = "armed"
             return
-        under = st.last_good_price
         qty = settings.pivot_contracts
+        stop = round(fill.price * (1 - settings.pivot_stop_pct), 2) if settings.pivot_stop_pct > 0 else -1.0
         st.position = PivotPosition(
             ticker=st.ticker, direction=direction, option_type=option_type,
             contract_symbol=contract.symbol, strike=contract.strike, expiry=contract.expiry,
             qty=qty, remaining_qty=qty, entry_price=fill.price, entry_time=time.time(),
-            entry_underlying=under, pp=pv.pp, target=target,
-            current_price=fill.price, last_underlying=under,
-            stop_premium=round(fill.price * (1 - settings.pivot_stop_pct), 2),
+            entry_underlying=under, pp=level, target=tgt_val,
+            entry_zone_label=level_label, target_label=tgt_lab,
+            current_price=fill.price, last_underlying=under, stop_premium=stop,
         )
         st.state = "open"
         st.can_enter = False
-        trig = "R1" if direction == "SHORT" else "S1"
+        runner = f"runner → {tgt_lab} {tgt_val:.2f}" if tgt_val is not None else "runner → no zone (stop/EOD)"
         st.log_event(f"ENTRY {direction} {qty}x {contract.symbol} @ {fill.price:.2f} "
-                     f"(strike {contract.strike:g} = PP; trigger {trig}; stop {st.position.stop_premium:.2f})")
+                     f"(ATM strike {contract.strike:g}; fade {level_label} {level:.2f} {approach}; "
+                     f"{runner})")
         self.trades.append(self._record("ENTRY", st.position, qty, fill.price, None, None))
 
     # --- management ----------------------------------------------------------
@@ -298,23 +312,21 @@ class PivotEngine:
         if time.time() - pos.entry_time < settings.pivot_min_hold_seconds:
             return
 
-        # 1) Premium stop (50% of value, or breakeven after the scale).
-        if pos.current_price <= pos.stop_premium:
-            label = "breakeven stop" if pos.breakeven else "50% premium stop"
+        # 1) Premium stop (disabled if <0; breakeven after the scale).
+        if pos.stop_premium >= 0 and pos.current_price <= pos.stop_premium:
+            label = "breakeven stop" if pos.breakeven else "premium stop"
             self._close(st, pos.remaining_qty, "STOP", f"{label} @ {pos.current_price:.2f}")
             return
 
-        # 2) Scale 50% at the pivot, then move stop to breakeven.
-        #    The plan is LOCKED at entry: scale at pos.pp and run to pos.target —
-        #    NOT the live pivots, which drift intraday as the prior-day OHLC
-        #    settles. (Using the live PP once let a drifting level sit above price
-        #    during a run-up so the scale never fired.) One structural action per
-        #    tick: after scaling we return and manage the runner next tick.
-        reached_pivot = (price <= pos.pp + half) if pos.direction == "SHORT" else (price >= pos.pp - half)
-        if reached_pivot and not pos.scaled:
-            half = max(1, int(round(pos.qty * settings.pivot_scale_pct)))
-            half = min(half, pos.remaining_qty)
-            self._close(st, half, "SCALE", f"50% off at pivot {pos.pp:.2f}", keep_open=True)
+        # 2) Scale to the runner at +PIVOT_SCALE_PROFIT (default +50%): sell all
+        #    but PIVOT_RUNNER_CONTRACTS, then move the stop to breakeven.
+        scale_at = round(pos.entry_price * (1 + settings.pivot_scale_profit), 2)
+        if not pos.scaled and pos.current_price >= scale_at:
+            take = max(0, pos.remaining_qty - max(1, settings.pivot_runner_qty))
+            if take > 0:
+                self._close(st, take, "SCALE",
+                            f"+{settings.pivot_scale_profit*100:.0f}% @ {pos.current_price:.2f} "
+                            f"— {take} off, {pos.remaining_qty-take} runner", keep_open=True)
             pos.scaled = True
             pos.breakeven = True
             pos.stop_premium = round(pos.entry_price, 2)  # breakeven
@@ -324,11 +336,14 @@ class PivotEngine:
                 st.state = "armed"
             return
 
-        # 3) Final target: S1 (short) / R1 (long) — enter the target zone.
-        hit_target = (price <= pos.target + half) if pos.direction == "SHORT" else (price >= pos.target - half)
-        if hit_target:
-            tlabel = "S1" if pos.direction == "SHORT" else "R1"
-            self._close(st, pos.remaining_qty, "TARGET", f"target {tlabel} {pos.target:.2f}")
+        # 3) Runner exits when price reaches the NEXT zone (down for shorts, up
+        #    for longs). No next zone -> runner rides to the stop / EOD flatten.
+        if pos.target is not None:
+            hit = (price <= pos.target + half) if pos.direction == "SHORT" else (price >= pos.target - half)
+            if hit:
+                self._close(st, pos.remaining_qty, "TARGET",
+                            f"runner hit {pos.target_label} zone {pos.target:.2f}")
+                return
 
     def _close(self, st: PivotTickerState, qty: int, exit_type: str, reason: str,
                keep_open: bool = False) -> None:
@@ -359,10 +374,11 @@ class PivotEngine:
                 pnl, exit_type, reason: str = "") -> TradeRecord:
         return TradeRecord(
             ts=time.time(), ticker=pos.ticker, action=action, exit_type=exit_type,
-            reason=reason or f"{pos.direction} pivot {pos.option_type}",
+            reason=reason or f"{pos.direction} fade {pos.entry_zone_label} ({pos.option_type})",
             underlying=pos.last_underlying, contract_symbol=pos.contract_symbol,
             strike=pos.strike, qty=qty, price=price, pnl=pnl, dry_run=settings.dry_run,
-            stance=self.regime, entry_price=pos.entry_price, entry_underlying=pos.entry_underlying,
+            stance=f"fade {pos.entry_zone_label}", entry_price=pos.entry_price,
+            entry_underlying=pos.entry_underlying,
             lower=pos.target, mid=pos.pp, top=None,
         )
 
@@ -378,8 +394,7 @@ class PivotEngine:
                     "zone_width": settings.pivot_zone_width(st.ticker),
                     "pivots": to_jsonable(st.pivots) if st.pivots else None,
                     "quote": to_jsonable(st.quote) if st.quote else None,
-                    "direction": (self.regime == "bearish" and "SHORT") or
-                                 (self.regime == "bullish" and "LONG") or None,
+                    "direction": pos.direction if pos else None,
                     "position": to_jsonable(pos) if pos else None,
                     "open_pnl": pos.open_pnl if pos else None,
                     "total_pnl": pos.total_pnl if pos else None,

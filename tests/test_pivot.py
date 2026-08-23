@@ -74,6 +74,8 @@ def make_engine(p):
     settings.pivot_zones = {"SPY": 0.50, "QQQ": 0.75}   # zone widths (per ticker)
     settings.pivot_stop_pct = 0.5
     settings.pivot_scale_pct = 0.5
+    settings.pivot_scale_profit = 0.5       # scale the lot to the runner at +50%
+    settings.pivot_runner_qty = 1           # keep 1 runner
     settings.pivot_min_hold_seconds = 0.0   # off unless a test enables it
     settings.pivot_max_dev_pct = 0.03
     settings.pivot_max_jump_pct = 0.02
@@ -95,95 +97,119 @@ class _PivotsP:
 
 def stt(eng): return eng.states["QQQ"]
 
-
-# --- the guards ------------------------------------------------------------
+# --- spike guards (unchanged) ----------------------------------------------
 def test_spiked_underlying_does_not_trigger_entry():
-    """787.97 (≈6% above prior close) must be rejected, not traded."""
     p = FakePivot(); p.price = 787.97
     eng = make_engine(p); eng._tick()
-    assert stt(eng).position is None, "spiked print must not open a position"
+    assert stt(eng).position is None
     assert stt(eng).quote_bad is True
     assert not any(o[0] == "BUY" for o in p.orders)
 
 
 def test_big_jump_between_ticks_is_rejected():
     p = FakePivot(); p.price = 740.0
-    eng = make_engine(p); eng._tick()                 # establish a good baseline
+    eng = make_engine(p); eng._tick()
     assert stt(eng).last_good_price == 740.0
-    p.price = 765.0                                   # +3.4% jump in one tick
-    eng._tick()
-    assert stt(eng).last_good_price == 740.0, "jump should be rejected, baseline held"
+    p.price = 765.0; eng._tick()
+    assert stt(eng).last_good_price == 740.0
     assert stt(eng).quote_bad is True
 
 
-def test_clean_quote_at_r1_enters_short():
-    p = FakePivot(); p.price = 748.5                  # at R1 (748.66) within prox, ~0.4% dev OK?
-    # 748.5 vs prior close 746.21 is 0.31% — within the 3% band, so accepted.
-    eng = make_engine(p); eng._tick()
-    assert stt(eng).position is not None
-    assert stt(eng).position.direction == "SHORT"
-    assert stt(eng).position.option_type == "PUT"
+# --- zone-fade entries -----------------------------------------------------
+# QQQ zones (half 0.375): S3 729.52, S2 736.73, S1 741.47, PP 743.94,
+#                         R1 748.68, R2 751.15, R3 758.36
+def _cross_up_into_s1(eng, p):
+    p.price = 740.0; eng._tick()   # below S1 zone (between S2 and S1)
+    p.price = 741.2; eng._tick()   # cross UP into S1 zone -> SHORT
 
 
-def test_min_hold_blocks_same_tick_exit():
-    p = FakePivot(); p.price = 748.5
-    eng = make_engine(p)
-    settings.pivot_min_hold_seconds = 60.0            # cannot exit immediately
-    eng._tick()
-    assert stt(eng).position is not None
-    p.price = 740.0                                   # would otherwise scale+target
-    eng._tick()
-    assert stt(eng).position is not None, "min-hold must keep the fresh position open"
-    assert stt(eng).position.remaining_qty == 4
-
-
-def test_exit_mark_floored_at_intrinsic():
-    """A stale 0.51 mid on a deep-ITM put must not fabricate a loss."""
-    p = FakePivot(); p.price = 748.5
-    eng = make_engine(p); eng._tick()
+def test_short_fade_zone_from_below():
+    p = FakePivot(); eng = make_engine(p)
+    _cross_up_into_s1(eng, p)
     pos = stt(eng).position
-    # Stale/one-sided option quote, far below intrinsic.
-    p.opt_bid, p.opt_ask, p.opt_last = 0.0, 0.0, 0.51
-    p.price = 740.0                                   # 744 put now ITM ~4
-    eng._tick()
-    # Whatever closed, no leg should have filled below intrinsic (~4 -> >= entry).
-    sells = [o for o in p.orders if o[0] == "SELL"]
-    assert sells, "should have scaled/closed"
-    assert all(o[3] >= 3.9 for o in sells), f"exit filled below intrinsic: {sells}"
+    assert pos and pos.direction == "SHORT" and pos.option_type == "PUT"
+    assert pos.entry_zone_label == "S1"
+    assert pos.target_label == "S2" and abs(pos.target - 736.73) < 0.05   # next zone DOWN
+    assert pos.qty == 4 and pos.remaining_qty == 4
+    assert any(o[0] == "BUY" for o in p.orders)
 
 
-def test_one_action_per_tick_scale_then_target():
-    """Scale and final target must not both fire on the same tick."""
-    p = FakePivot(); p.price = 748.5
-    eng = make_engine(p); eng._tick()                 # entry
-    # premium tracks intrinsic so no premium-stop interferes
-    p.opt_bid, p.opt_ask, p.opt_last = 6.0, 6.1, 6.05
-    p.price = 740.0                                   # gaps below PP and S1 at once
-    eng._tick()
+def test_long_fade_zone_from_above():
+    p = FakePivot(); eng = make_engine(p)
+    p.price = 745.0; eng._tick()   # above PP zone (between PP and R1)
+    p.price = 744.0; eng._tick()   # cross DOWN into PP zone -> LONG
     pos = stt(eng).position
-    assert pos is not None and pos.scaled and pos.remaining_qty == 2, "scaled only this tick"
-    eng._tick()                                       # now the runner targets out
+    assert pos and pos.direction == "LONG" and pos.option_type == "CALL"
+    assert pos.entry_zone_label == "PP"
+    assert pos.target_label == "R1" and abs(pos.target - 748.68) < 0.05    # next zone UP
+
+
+def test_no_entry_when_sitting_in_zone_without_crossing():
+    p = FakePivot(); eng = make_engine(p)
+    p.price = 741.3; eng._tick()   # first sight already inside S1 zone (no fresh cross)
+    assert stt(eng).position is None
+    p.price = 741.5; eng._tick()   # still inside, no cross
     assert stt(eng).position is None
 
 
-def test_scale_uses_locked_entry_pivot_not_drifting_live():
-    """The scale must trigger at the entry-time PP, not the live (drifting) PP.
-    Live daily pivots jitter as prior-day OHLC settles; the trade plan is locked."""
-    p = FakePivot(); p.price = 748.5                  # bearish -> SHORT, pos.pp ~743.94
-    eng = make_engine(p); eng._tick()
-    pos = stt(eng).position
-    assert pos is not None and not pos.scaled
-    # Simulate the live pivots drifting well below the entry plan.
-    stt(eng).pivots.pp = pos.pp - 5.0
-    # Price dips just past the ENTRY pp but stays above the drifted live pp.
-    p.price = pos.pp - 0.1
+def test_no_entry_between_zones():
+    p = FakePivot(); eng = make_engine(p)
+    p.price = 745.0; eng._tick()   # between PP and R1
+    assert stt(eng).position is None
+    assert "between zones" in stt(eng).last_event
+
+
+# --- runner management -----------------------------------------------------
+def test_scale_to_runner_at_50pct_profit():
+    p = FakePivot(); eng = make_engine(p)
+    _cross_up_into_s1(eng, p)
+    pos = stt(eng).position; entry = pos.entry_price
+    p.opt_bid, p.opt_ask, p.opt_last = entry * 1.6, entry * 1.6 + 0.1, entry * 1.6  # +60%
     eng._tick()
-    assert stt(eng).position is not None and stt(eng).position.scaled, \
-        "scale must fire at the locked entry PP, not the drifted live PP"
+    pos = stt(eng).position
+    assert pos.scaled and pos.remaining_qty == 1, "sell 3, keep 1 runner"
+    assert pos.breakeven and pos.stop_premium == round(entry, 2)
+    sells = [o for o in p.orders if o[0] == "SELL"]
+    assert sells and sells[0][2] == 3
 
 
+def test_runner_exits_at_next_zone():
+    p = FakePivot(); eng = make_engine(p)
+    _cross_up_into_s1(eng, p)
+    pos = stt(eng).position; entry = pos.entry_price
+    p.opt_bid, p.opt_ask = entry * 1.6, entry * 1.6 + 0.1
+    eng._tick()                                    # scale -> 1 runner
+    assert stt(eng).position.remaining_qty == 1
+    p.price = 736.8                                # falls into S2 zone (the target)
+    p.opt_bid, p.opt_ask = 6.0, 6.1
+    eng._tick()
+    assert stt(eng).position is None
+    assert "runner hit S2" in stt(eng).last_event
+
+
+def test_min_hold_blocks_immediate_exit():
+    p = FakePivot(); eng = make_engine(p)
+    settings.pivot_min_hold_seconds = 60.0
+    _cross_up_into_s1(eng, p)                       # entry (min-hold doesn't block entry)
+    pos = stt(eng).position; entry = pos.entry_price
+    p.opt_bid, p.opt_ask = entry * 2, entry * 2 + 0.1
+    p.price = 736.8                                # would scale AND hit target
+    eng._tick()
+    assert stt(eng).position is not None and stt(eng).position.remaining_qty == 4
+
+
+def test_exit_mark_floored_at_intrinsic():
+    p = FakePivot(); eng = make_engine(p)
+    _cross_up_into_s1(eng, p)                       # SHORT PUT, ATM strike ~741
+    p.opt_bid, p.opt_ask, p.opt_last = 0.0, 0.0, 0.10   # stale one-sided book
+    p.price = 736.8                                # put ITM ~4.2; falls into S2 target
+    eng._tick()
+    sells = [o for o in p.orders if o[0] == "SELL"]
+    assert sells and all(o[3] >= 4.0 for o in sells), f"exit below intrinsic: {sells}"
+
+
+# --- zones / config --------------------------------------------------------
 def test_pivots_frozen_for_session():
-    """Pivots are computed once per ET day and held, even if the source drifts."""
     from app.clients.pivots import PivotsProvider
 
     class Src:
@@ -193,49 +219,32 @@ def test_pivots_frozen_for_session():
     src = Src()
     pp = PivotsProvider(src)
     a = pp.get_pivots("QQQ")
-    src.o = {"high": 800.0, "low": 700.0, "close": 750.0}   # source revises intraday
+    src.o = {"high": 800.0, "low": 700.0, "close": 750.0}
     b = pp.get_pivots("QQQ")
     assert b.pp == a.pp and b.r1 == a.r1 and b.s1 == a.s1, "pivots must be frozen for the session"
 
 
-def test_management_uses_live_last_not_lagging_minute_close():
-    """Scale/target must respond to the live price, not a stale 1-minute close.
-    (Live price hit R1/PP but the lagging minute close kept the trade from acting.)"""
-    p = FakePivot(); p.price = 748.5                  # bearish -> SHORT at R1, pos.pp ~743.94
-    eng = make_engine(p); eng._tick()
-    pos = stt(eng).position
-    assert pos is not None and not pos.scaled
-    p.price = pos.pp - 0.1                             # live price reaches the pivot
-    p.mclose = pos.pp + 3.0                            # 1-minute close still lags up high
-    eng._tick()
-    assert stt(eng).position.scaled, "scale must use the live last, not the lagging minute close"
-
-
-def test_zone_width_widens_entry_band():
-    """A wider zone lets price trigger further from the exact pivot line."""
+def test_wide_zone_widens_entry_band():
     p = FakePivot(); eng = make_engine(p)
-    settings.pivot_zones = {"QQQ": 4.0}               # half = 2.0
-    r1 = stt(eng).pivots and None                     # pivots load on tick
-    p.price = 747.0                                   # ~1.7 below R1 (748.68) -> inside zone
-    eng._tick()
+    settings.pivot_zones = {"QQQ": 4.0}            # half = 2.0; R1 zone [746.68, 750.68]
+    p.price = 746.0; eng._tick()                   # below R1 wide zone -> between zones
+    p.price = 747.0; eng._tick()                   # 1.68 below R1 line but inside wide zone
     pos = stt(eng).position
-    assert pos is not None and pos.direction == "SHORT", "wide zone should trigger inside the band"
+    assert pos is not None and pos.entry_zone_label == "R1" and pos.direction == "SHORT"
 
 
 def test_narrow_zone_no_entry_outside_band():
     p = FakePivot(); eng = make_engine(p)
-    settings.pivot_zones = {"QQQ": 0.2}               # half = 0.1
-    p.price = 748.3                                   # >0.1 below R1 748.68 -> not in zone
-    eng._tick()
-    assert stt(eng).position is None, "narrow zone: price outside band must not enter"
-    assert stt(eng).state == "armed"
+    settings.pivot_zones = {"QQQ": 0.2}            # half = 0.1; R1 zone [748.58, 748.78]
+    p.price = 748.0; eng._tick()
+    p.price = 748.4; eng._tick()                   # >0.1 below R1 748.68 -> not in zone
+    assert stt(eng).position is None
 
 
 def test_zone_width_per_ticker_config():
     settings.pivot_zones = {"SPY": 0.50, "QQQ": 0.75}
     assert settings.pivot_zone_width("SPY") == 0.50 and settings.pivot_zone_half("SPY") == 0.25
     assert settings.pivot_zone_width("QQQ") == 0.75 and settings.pivot_zone_half("QQQ") == 0.375
-    # unknown ticker falls back to 2x proximity
     settings.pivot_proximity = 0.5
     assert settings.pivot_zone_width("IWM") == 1.0
 

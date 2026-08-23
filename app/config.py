@@ -119,9 +119,13 @@ class Settings:
     # Each pivot level is a ZONE this many dollars wide, centered on the line.
     # A level is "reached" when price enters its zone (within width/2). Per ticker.
     pivot_zones: dict = field(default_factory=lambda: _zone_map("PIVOT_ZONES", {"SPY": 0.50, "QQQ": 0.75}))
-    # Initial stop = this fraction of the entry premium lost (0.5 = 50%).
+    # Initial stop = this fraction of the entry premium lost (0.5 = 50%). <=0 disables.
     pivot_stop_pct: float = field(default_factory=lambda: _float("PIVOT_STOP_PCT", 0.5))
-    # Fraction of the lot scaled out at the pivot (0.5 = 50%).
+    # Scale the lot down to the runner once premium is up this fraction (0.5 = +50%).
+    pivot_scale_profit: float = field(default_factory=lambda: _float("PIVOT_SCALE_PROFIT", 0.5))
+    # Contracts left as the runner after scaling (rest are sold at +profit).
+    pivot_runner_qty: int = field(default_factory=lambda: _int("PIVOT_RUNNER_CONTRACTS", 1))
+    # (legacy) fraction scaled at the pivot — unused by the zone-fade logic.
     pivot_scale_pct: float = field(default_factory=lambda: _float("PIVOT_SCALE_PCT", 0.5))
     # VIX symbol used to compute the regime (its own daily pivot).
     vix_symbol: str = field(default_factory=lambda: os.getenv("VIX_SYMBOL", "$VIX"))

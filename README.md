@@ -46,32 +46,33 @@ The `$1` band, contract count, tickers and poll cadences are all configurable.
 
 ## Strategy 2 — Person's Pivots (second tab)
 
-A VIX-gated mean-reversion strategy on **Person's pivots** (computed from the
+A **zone-fade** mean-reversion strategy on **Person's pivots** (computed from the
 prior session's OHLC: `PP=(H+L+C)/3`, `R1=2PP−L`, `S1=2PP−H`, …). Levels are
 **frozen on the first fetch of the trading day** so they never drift under an
-open trade; a trade's scale/target/stop plan is additionally locked at entry.
+open trade.
 
-- **Regime** by VIX vs its own daily pivot: VIX **above** its PP → **bearish**
-  (shorts); VIX **below** → **bullish** (longs).
-- **Short** (bearish): when QQQ/SPY reaches **R1** → **buy 0DTE puts** struck
-  closest to **PP**. **Long** (bullish): when price reaches **S1** → **buy 0DTE
-  calls** struck closest to PP.
-- **Zones, not lines**: each pivot level is a **zone** centered on the line,
-  configurable per ticker via `PIVOT_ZONES` (default **SPY $0.50**, **QQQ $0.75**
-  wide). A level is "reached" when price enters its zone (within width/2), and the
-  ladder draws the zones as shaded bands.
-- **Manage**: scale **50%** out at the **pivot (PP)**, move the stop to
-  **breakeven**, run the rest to the opposite level (**S1** for shorts, **R1**
-  for longs). Initial stop = **`PIVOT_STOP_PCT`** of entry premium (default 50%).
+- **Zones, not lines**: each of the 7 pivot levels (PP, R1–R3, S1–S3) is a
+  **zone** centered on the line, per ticker via `PIVOT_ZONES` (default **SPY
+  $0.50**, **QQQ $0.75** wide). The ladder draws them as shaded bands.
+- **Entry by direction of approach** — into any zone:
+  - **From below** (price rising into the zone) → **short**: buy **4 ATM puts**.
+  - **From above** (price falling into the zone) → **long**: buy **4 ATM calls**.
+- **Scale**: once the premium is up **+50%** (`PIVOT_SCALE_PROFIT`), sell all but
+  the runner (`PIVOT_RUNNER_CONTRACTS`, default 1) and move the stop to breakeven.
+- **Runner**: exits when price reaches the **next zone** — the next zone **down**
+  for shorts, the next zone **up** for longs. If there is no next zone, the runner
+  rides to the stop / EOD flatten.
+- **Contracts** via `PIVOT_CONTRACTS` (default 4). VIX is still shown as context
+  but no longer gates entries.
 - Pivot data is **Schwab-backed** (daily OHLC + VIX) regardless of
   `MARKET_DATA_PROVIDER`. Its own trade log (`PIVOT_TRADE_LOG_PATH`),
   CSV export (`/api/pivot/trades.csv`), and controls (`/api/pivot/control/...`).
 - **Bad-data guards** (a single spiked/stale print must not trade): decisions run
-  on the validated 1-minute close; a price >`PIVOT_MAX_DEV_PCT` from the prior
-  close or >`PIVOT_MAX_JUMP_PCT` between ticks is rejected; entries require a
-  two-sided option market; exits are priced off an **intrinsic-floored** mark so
-  a stale book can't fabricate a loss; and a `PIVOT_MIN_HOLD_SECONDS` window plus
-  one-structural-action-per-tick prevent enter-and-flatten on the same spike.
+  on the validated live price; a price >`PIVOT_MAX_DEV_PCT` from the prior close
+  or >`PIVOT_MAX_JUMP_PCT` between ticks is rejected; entries require a two-sided
+  option market; exits are priced off an **intrinsic-floored** mark so a stale
+  book can't fabricate a loss; and a `PIVOT_MIN_HOLD_SECONDS` window prevents
+  enter-and-flatten on the same spike.
 
 ## Breakeven stop (gamma strategy)
 

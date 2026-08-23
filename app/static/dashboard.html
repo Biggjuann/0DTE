@@ -54,6 +54,8 @@
   /* pivot bits */
   .b-bear{background:rgba(248,113,113,.12);color:var(--red);border:1px solid rgba(248,113,113,.3)}
   .b-bull{background:rgba(52,211,153,.12);color:var(--green);border:1px solid rgba(52,211,153,.3)}
+  .zoneinfo{background:rgba(56,189,248,.10);color:var(--blue);border:1px solid rgba(56,189,248,.3);
+    font-size:12px;line-height:1.4}
   .rung.res{border-color:rgba(248,113,113,.45)} .rlab.res b{color:var(--red)}
   .rung.piv{border-color:rgba(167,139,250,.7)} .rlab.piv b{color:var(--violet)}
   .rung.sup{border-color:rgba(52,211,153,.45)} .rlab.sup b{color:var(--green)}
@@ -431,11 +433,10 @@ function render(s){
 // ---- Person's Pivots tab ----
 function pivotRegime(s){
   const el=document.getElementById('pivotRegime');
-  if(!s.regime){el.className='banner b-off';el.textContent='VIX regime unknown — awaiting VIX data';return;}
-  if(s.regime==='bearish'){el.className='banner b-bear';
-    el.textContent=`BEARISH — VIX ${fmt(s.vix_last)} > pivot ${fmt(s.vix_pp)}  ·  shorts at R1 (buy puts)`;}
-  else{el.className='banner b-bull';
-    el.textContent=`BULLISH — VIX ${fmt(s.vix_last)} ≤ pivot ${fmt(s.vix_pp)}  ·  longs at S1 (buy calls)`;}
+  const vix=s.vix_last!=null?`  ·  VIX ${fmt(s.vix_last)}`:'';
+  el.className='banner zoneinfo';
+  el.textContent=`ZONE FADE — into a zone from BELOW → short puts · from ABOVE → long calls  ·  `
+    +`${s.contracts} ATM, scale to 1 runner @ +50%, runner exits at the next zone${vix}`;
 }
 
 function pivotLadder(pv,price,zoneW){
@@ -465,22 +466,25 @@ function pivotLadder(pv,price,zoneW){
 }
 
 function pivotPosition(t){
-  const p=t.position, pv=t.pivots;
+  const p=t.position;
   if(!p){
-    if(t.state==='armed'&&pv&&t.direction)
-      return `<div class="targets">Armed ${t.direction} · trigger ${t.direction==='SHORT'?'R1 '+fmt(pv.r1):'S1 '+fmt(pv.s1)} · strike ≈ PP ${fmt(pv.pp)}</div>`;
+    if(t.state==='armed')
+      return `<div class="targets">Armed — into a zone from below → puts · from above → calls</div>`;
     return '';
   }
   const dirPill=p.direction==='SHORT'?'pill-short':'pill-long';
   const tot=t.total_pnl, opc=tot>=0?'pnl-pos':'pnl-neg';
+  const tgt=p.target!=null?`${p.target_label} ${fmt(p.target)}`:'next zone (none)';
+  const stop=p.stop_premium>=0?`${fmt(p.stop_premium)} prem`:'—';
   return `<div class="pos">
-    <div class="row"><span>Position</span><span><span class="pill2 ${dirPill}">${p.direction} ${p.option_type}</span>${p.scaled?' <span class="pill2 pill-scaled">SCALED 50%</span>':''}${p.breakeven?' <span class="pill2 pill-be">BE STOP</span>':''}</span></div>
-    <div class="row"><span>Contract</span><span class="mono">${p.contract_symbol}</span></div>
+    <div class="row"><span>Position</span><span><span class="pill2 ${dirPill}">${p.direction} ${p.option_type}</span>${p.scaled?' <span class="pill2 pill-scaled">RUNNER</span>':''}${p.breakeven?' <span class="pill2 pill-be">BE</span>':''}</span></div>
+    <div class="row"><span>Contract (ATM)</span><span class="mono">${p.contract_symbol}</span></div>
+    <div class="row"><span>Faded zone</span><span class="mono">${p.entry_zone_label} ${fmt(p.pp)}</span></div>
     <div class="row"><span>Qty (rem / init)</span><span class="mono">${p.remaining_qty} / ${p.qty}</span></div>
     <div class="row"><span>Entry → Now</span><span class="mono">${fmt(p.entry_price)} → ${fmt(p.current_price)}</span></div>
-    <div class="row"><span>Stop / Target</span><span class="mono">${fmt(p.stop_premium)} prem · ${fmt(p.target)}</span></div>
+    <div class="row"><span>Stop / Runner tgt</span><span class="mono">${stop} · ${tgt}</span></div>
     <div class="row"><span>Realized + Open</span><span class="mono ${opc}">${money(p.realized_pnl)} + ${money(t.open_pnl)} = ${money(tot)}</span></div>
-    <div class="targets">Scale 50% at PP ${fmt(p.pp)} → stop to breakeven → run to ${p.direction==='SHORT'?'S1':'R1'} ${fmt(p.target)}</div>
+    <div class="targets">Scale to runner @ +50% → breakeven → runner exits at ${tgt}</div>
   </div>`;
 }
 

@@ -206,7 +206,8 @@ class PivotLevels:
 
 @dataclass
 class PivotPosition:
-    """A pivot trade that scales out 50% at the pivot and runs the rest."""
+    """A zone-fade trade: 4 ATM contracts, scale most at +50% profit, run a
+    runner to the next zone (down for shorts, up for longs)."""
 
     ticker: str
     direction: str               # LONG / SHORT
@@ -219,13 +220,15 @@ class PivotPosition:
     entry_price: float           # premium paid
     entry_time: float
     entry_underlying: float
-    pp: float
-    target: float                # S1 (short) or R1 (long)
+    pp: float                    # the zone level we faded (entry zone)
+    target: Optional[float] = None   # runner exit level (next zone), None if none
+    entry_zone_label: str = ""       # e.g. "R1"
+    target_label: str = ""           # e.g. "PP"
     current_price: float = 0.0
     last_underlying: float = 0.0
-    scaled: bool = False         # 50% taken at the pivot
+    scaled: bool = False         # the 3 lots taken at +50%
     breakeven: bool = False      # stop moved to breakeven
-    stop_premium: float = 0.0    # premium stop level
+    stop_premium: float = 0.0    # premium stop level (<0 = disabled)
     realized_pnl: float = 0.0    # locked in from the scale-out
 
     @property
