@@ -409,6 +409,7 @@ class PivotEngine:
                 "running": self.running,
                 "auto_trade": self.auto_trade,
                 "contracts": settings.pivot_contracts,
+                "timeframe": settings.pivot_timeframe,
                 "session": market_hours.info(),
                 "vix_symbol": self.providers.vix_symbol,
                 "vix_last": self.vix_last,

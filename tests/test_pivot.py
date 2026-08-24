@@ -258,6 +258,22 @@ def test_narrow_zone_no_entry_outside_band():
     assert stt(eng).position is None
 
 
+def test_pivots_use_configured_timeframe():
+    from app.clients.pivots import PivotsProvider
+
+    class Src:
+        def __init__(self): self.tf = []
+        def get_prior_ohlc(self, t, timeframe):
+            self.tf.append(timeframe)
+            return {"high": 760.0, "low": 740.0, "close": 750.0}
+
+    src = Src()
+    pp = PivotsProvider(src, timeframe="weekly")
+    lv = pp.get_pivots("QQQ")
+    assert src.tf and src.tf[0] == "weekly", "provider must request the weekly period"
+    assert lv is not None and lv.pp == round((760 + 740 + 750) / 3, 2)
+
+
 def test_zone_width_per_ticker_config():
     settings.pivot_zones = {"SPY": 0.50, "QQQ": 0.75}
     assert settings.pivot_zone_width("SPY") == 0.50 and settings.pivot_zone_half("SPY") == 0.25

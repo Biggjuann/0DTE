@@ -173,7 +173,7 @@ class Position:
 
 @dataclass
 class PivotLevels:
-    """Person's pivots from the prior session's OHLC (higher timeframe = daily)."""
+    """Person's pivots from the prior period's OHLC (default timeframe = weekly)."""
 
     ticker: str
     pp: float

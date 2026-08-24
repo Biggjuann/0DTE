@@ -116,6 +116,9 @@ class Settings:
     # Touch band for reaching R1 / S1 / PP / target (dollars) — fallback when a
     # ticker has no zone configured below.
     pivot_proximity: float = field(default_factory=lambda: _float("PIVOT_PROXIMITY", 0.5))
+    # Prior-period OHLC used for the pivots: "weekly" (prior completed week) or
+    # "daily" (prior session).
+    pivot_timeframe: str = field(default_factory=lambda: os.getenv("PIVOT_TIMEFRAME", "weekly").lower())
     # Each pivot level is a ZONE this many dollars wide, centered on the line.
     # A level is "reached" when price enters its zone (within width/2). Per ticker.
     pivot_zones: dict = field(default_factory=lambda: _zone_map("PIVOT_ZONES", {"SPY": 0.50, "QQQ": 0.75}))

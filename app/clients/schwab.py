@@ -153,14 +153,19 @@ class SchwabClient:
     def get_0dte_puts(self, ticker: str, near_strike: float, width: float = 5.0) -> List[OptionContract]:
         return self._chains(ticker, "PUT", "putExpDateMap", width)
 
-    def get_prior_day_ohlc(self, ticker: str) -> Optional[dict]:
-        """High/low/close of the prior completed daily session (for pivots)."""
-        r = self._get(
-            f"{self.base}/marketdata/v1/pricehistory",
-            params={"symbol": ticker, "periodType": "month", "period": 1,
-                    "frequencyType": "daily", "frequency": 1,
-                    "needExtendedHoursData": "false"},
-        )
+    def get_prior_ohlc(self, ticker: str, timeframe: str = "daily") -> Optional[dict]:
+        """High/low/close of the prior completed period (for pivots).
+
+        weekly -> the last weekly candle that fully completed before this week.
+        daily  -> the last daily candle before today.
+        """
+        weekly = str(timeframe).lower().startswith("week")
+        params = ({"symbol": ticker, "periodType": "year", "period": 1,
+                   "frequencyType": "weekly", "frequency": 1, "needExtendedHoursData": "false"}
+                  if weekly else
+                  {"symbol": ticker, "periodType": "month", "period": 1,
+                   "frequencyType": "daily", "frequency": 1, "needExtendedHoursData": "false"})
+        r = self._get(f"{self.base}/marketdata/v1/pricehistory", params=params)
         if r is None or r.status_code != 200:
             return None
         try:
@@ -168,18 +173,24 @@ class SchwabClient:
             if not candles:
                 return None
             today = dt.date.today()
+            # Weekly: exclude the in-progress week (any candle whose start is within
+            # the last 7 days) — robust to Sunday- vs Monday-anchored candles.
+            cutoff = today - dt.timedelta(days=7) if weekly else today
             prior = None
             for c in reversed(candles):
                 d = dt.datetime.fromtimestamp(c["datetime"] / 1000).date()
-                if d < today:
+                if (d <= cutoff) if weekly else (d < cutoff):
                     prior = c
                     break
             prior = prior or candles[-1]
             return {"high": float(prior["high"]), "low": float(prior["low"]),
                     "close": float(prior["close"])}
         except Exception as exc:  # pragma: no cover - network
-            log.warning("schwab pivots ohlc %s failed: %s", ticker, exc)
+            log.warning("schwab pivots ohlc %s (%s) failed: %s", ticker, timeframe, exc)
             return None
+
+    def get_prior_day_ohlc(self, ticker: str) -> Optional[dict]:
+        return self.get_prior_ohlc(ticker, "daily")
 
     def get_contract(self, symbol: str) -> Optional[OptionContract]:
         r = self._get(f"{self.base}/marketdata/v1/{symbol}/quotes")

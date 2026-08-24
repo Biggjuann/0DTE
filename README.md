@@ -46,8 +46,9 @@ The `$1` band, contract count, tickers and poll cadences are all configurable.
 
 ## Strategy 2 — Person's Pivots (second tab)
 
-A **zone-fade** mean-reversion strategy on **Person's pivots** (computed from the
-prior session's OHLC: `PP=(H+L+C)/3`, `R1=2PP−L`, `S1=2PP−H`, …). Levels are
+A **zone-fade** mean-reversion strategy on **Person's pivots** (`PP=(H+L+C)/3`,
+`R1=2PP−L`, `S1=2PP−H`, …), computed from the **prior completed week's** OHLC
+(`PIVOT_TIMEFRAME=weekly`; set `daily` for the prior session). Levels are
 **frozen on the first fetch of the trading day** so they never drift under an
 open trade.
 

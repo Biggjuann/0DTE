@@ -155,17 +155,22 @@ class MockProvider:
         return OptionContract(symbol=symbol, strike=strike, expiry="0dte",
                               bid=round(prem - 0.05, 2), ask=round(prem + 0.05, 2), last=prem)
 
-    # --- prior-day OHLC (for pivots) -----------------------------------------
-    def get_prior_day_ohlc(self, ticker: str) -> Optional[dict]:
+    # --- prior-period OHLC (for pivots) --------------------------------------
+    def get_prior_ohlc(self, ticker: str, timeframe: str = "weekly") -> Optional[dict]:
         if _is_vix(ticker):
             return {"high": 22.0, "low": 18.0, "close": 20.0}  # VIX PP = 20
         a = _anchor(ticker)
         # Place pivots inside the price sweep: PP~mid, R1 near top, S1 near floor.
+        # Weekly spans a touch wider than daily (bigger prior range).
+        span = 0.75 if str(timeframe).lower().startswith("week") else 0.6
         mid, lo, top = a["mid"], a["lower"], a["top"]
-        high = round(mid + (top - mid) * 0.6, 2)
-        low = round(mid - (mid - lo) * 0.6, 2)
+        high = round(mid + (top - mid) * span, 2)
+        low = round(mid - (mid - lo) * span, 2)
         close = round(mid + 1, 2)
         return {"high": high, "low": low, "close": close}
+
+    def get_prior_day_ohlc(self, ticker: str) -> Optional[dict]:
+        return self.get_prior_ohlc(ticker, "daily")
 
     # --- Broker --------------------------------------------------------------
     def buy_to_open(self, contract: OptionContract, qty: int) -> Fill:

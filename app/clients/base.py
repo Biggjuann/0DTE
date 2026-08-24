@@ -34,8 +34,14 @@ class MarketData(Protocol):
 
     def get_contract(self, symbol: str) -> Optional[OptionContract]: ...
 
+    def get_prior_ohlc(self, ticker: str, timeframe: str = "weekly") -> Optional[dict]:
+        """{'high','low','close'} of the prior completed period (for pivots).
+
+        timeframe: "weekly" (prior completed week) or "daily" (prior session)."""
+        ...
+
     def get_prior_day_ohlc(self, ticker: str) -> Optional[dict]:
-        """{'high','low','close'} of the prior completed session (for pivots)."""
+        """Back-compat alias for get_prior_ohlc(ticker, 'daily')."""
         ...
 
 

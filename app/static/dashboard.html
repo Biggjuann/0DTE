@@ -435,7 +435,8 @@ function pivotRegime(s){
   const el=document.getElementById('pivotRegime');
   const vix=s.vix_last!=null?`  ·  VIX ${fmt(s.vix_last)}`:'';
   el.className='banner zoneinfo';
-  el.textContent=`ZONE FADE — into a zone from BELOW → short puts · from ABOVE → long calls  ·  `
+  const tf=(s.timeframe||'weekly').toUpperCase();
+  el.textContent=`ZONE FADE (${tf} pivots) — into a zone from BELOW → short puts · from ABOVE → long calls  ·  `
     +`${s.contracts} ATM, scale to 1 runner @ +50%, runner exits at the next zone${vix}`;
 }
 
