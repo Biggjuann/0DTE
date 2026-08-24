@@ -56,14 +56,15 @@ open trade.
   **zone** centered on the line, per ticker via `PIVOT_ZONES` (default **SPY
   $0.50**, **QQQ $0.75** wide). The ladder draws them as shaded bands.
 - **Entry by direction of approach** — into any zone:
-  - **From below** (price rising into the zone) → **short**: buy **4 ATM puts**.
-  - **From above** (price falling into the zone) → **long**: buy **4 ATM calls**.
-- **Scale**: once the premium is up **+50%** (`PIVOT_SCALE_PROFIT`), sell all but
-  the runner (`PIVOT_RUNNER_CONTRACTS`, default 1).
-- **Runner**: exits when price reaches the **next zone** — the next zone **down**
-  for shorts, the next zone **up** for longs (or EOD flatten if there is none).
-- **No stop by default** (`PIVOT_STOP_PCT=0`): runners go zone-to-zone. Set
-  `PIVOT_STOP_PCT>0` to re-enable a premium stop that moves to breakeven on scale.
+  - **From below** (price rising into the zone) → **short**: buy **10 ATM puts**.
+  - **From above** (price falling into the zone) → **long**: buy **10 ATM calls**.
+  - Size via `PIVOT_CONTRACTS` (default 10).
+- **Take profit**: close the **whole position at +50%** (`PIVOT_SCALE_PROFIT`).
+  No runner by default (`PIVOT_RUNNER_CONTRACTS=0`); the only other exit is the
+  RTH **EOD flatten**.
+- **No stop by default** (`PIVOT_STOP_PCT=0`). Set `PIVOT_RUNNER_CONTRACTS>0` to
+  keep a runner (scales the rest at +50%, runs it to the next zone) or
+  `PIVOT_STOP_PCT>0` to re-enable a premium stop.
 - **Contracts** via `PIVOT_CONTRACTS` (default 4). VIX is still shown as context
   but no longer gates entries.
 - Pivot data is **Schwab-backed** (daily OHLC + VIX) regardless of

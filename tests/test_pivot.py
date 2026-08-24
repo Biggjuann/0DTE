@@ -74,8 +74,8 @@ def make_engine(p):
     settings.pivot_zones = {"SPY": 0.50, "QQQ": 0.75}   # zone widths (per ticker)
     settings.pivot_stop_pct = 0.5
     settings.pivot_scale_pct = 0.5
-    settings.pivot_scale_profit = 0.5       # scale the lot to the runner at +50%
-    settings.pivot_runner_qty = 1           # keep 1 runner
+    settings.pivot_scale_profit = 0.5       # take full profit at +50%
+    settings.pivot_runner_qty = 0           # no runner (exit all)
     settings.pivot_min_hold_seconds = 0.0   # off unless a test enables it
     settings.pivot_max_dev_pct = 0.03
     settings.pivot_max_jump_pct = 0.02
@@ -159,49 +159,40 @@ def test_no_entry_between_zones():
     assert "between zones" in stt(eng).last_event
 
 
-# --- runner management -----------------------------------------------------
-def test_scale_to_runner_at_50pct_profit():
+# --- take-profit management (no runner) ------------------------------------
+def test_take_full_profit_at_50pct():
     p = FakePivot(); eng = make_engine(p)
-    _cross_up_into_s1(eng, p)
+    _cross_up_into_s1(eng, p)                       # SHORT, 4 contracts
     pos = stt(eng).position; entry = pos.entry_price
     p.opt_bid, p.opt_ask, p.opt_last = entry * 1.6, entry * 1.6 + 0.1, entry * 1.6  # +60%
     eng._tick()
-    pos = stt(eng).position
-    assert pos.scaled and pos.remaining_qty == 1, "sell 3, keep 1 runner"
-    assert pos.breakeven and pos.stop_premium == round(entry, 2)
+    assert stt(eng).position is None, "the WHOLE position exits at +50% (no runner)"
     sells = [o for o in p.orders if o[0] == "SELL"]
-    assert sells and sells[0][2] == 3
+    assert sells and sells[0][2] == 4, "sell all 4 at once"
+    assert "take profit" in stt(eng).last_event.lower()
 
 
-def test_stop_disabled_by_default_no_breakeven():
+def test_no_exit_below_50pct_or_at_next_zone():
     p = FakePivot(); eng = make_engine(p)
-    settings.pivot_stop_pct = 0.0                   # stops OFF (the default)
-    _cross_up_into_s1(eng, p)
+    _cross_up_into_s1(eng, p)                       # SHORT, target field = S2 (context only)
     pos = stt(eng).position; entry = pos.entry_price
-    p.opt_bid, p.opt_ask, p.opt_last = entry * 1.6, entry * 1.6 + 0.1, entry * 1.6
-    eng._tick()                                     # scale to runner
-    pos = stt(eng).position
-    assert pos.scaled and pos.remaining_qty == 1
-    assert not pos.breakeven and pos.stop_premium < 0, "no stop when disabled"
-    # runner premium collapses toward zero but there is NO stop -> still open
-    p.opt_bid, p.opt_ask, p.opt_last = 0.0, 0.0, 0.02
-    p.price = 742.5                                 # still above the S2 target zone
+    # premium only +20% (below the +50% TP) and price reaches the old "next zone"
+    p.opt_bid, p.opt_ask, p.opt_last = entry * 1.2, entry * 1.2 + 0.1, entry * 1.2
+    p.price = 736.8                                # inside S2 zone — but no runner logic now
     eng._tick()
-    assert stt(eng).position is not None, "runner has no stop; only zones/EOD exit it"
+    assert stt(eng).position is not None, "no zone exit and premium <+50% -> stays open"
+    assert not any(o[0] == "SELL" for o in p.orders)
 
 
-def test_runner_exits_at_next_zone():
+def test_no_stop_when_premium_collapses():
     p = FakePivot(); eng = make_engine(p)
+    settings.pivot_stop_pct = 0.0                   # stops OFF (default)
     _cross_up_into_s1(eng, p)
-    pos = stt(eng).position; entry = pos.entry_price
-    p.opt_bid, p.opt_ask = entry * 1.6, entry * 1.6 + 0.1
-    eng._tick()                                    # scale -> 1 runner
-    assert stt(eng).position.remaining_qty == 1
-    p.price = 736.8                                # falls into S2 zone (the target)
-    p.opt_bid, p.opt_ask = 6.0, 6.1
+    p.opt_bid, p.opt_ask, p.opt_last = 0.0, 0.0, 0.02  # premium collapses
+    p.price = 741.6                                 # tiny move, no big intrinsic
     eng._tick()
-    assert stt(eng).position is None
-    assert "runner hit S2" in stt(eng).last_event
+    assert stt(eng).position is not None, "no stop -> position rides to +50% or EOD"
+    assert not any(o[0] == "SELL" for o in p.orders)
 
 
 def test_min_hold_blocks_immediate_exit():
@@ -209,8 +200,7 @@ def test_min_hold_blocks_immediate_exit():
     settings.pivot_min_hold_seconds = 60.0
     _cross_up_into_s1(eng, p)                       # entry (min-hold doesn't block entry)
     pos = stt(eng).position; entry = pos.entry_price
-    p.opt_bid, p.opt_ask = entry * 2, entry * 2 + 0.1
-    p.price = 736.8                                # would scale AND hit target
+    p.opt_bid, p.opt_ask = entry * 2, entry * 2 + 0.1   # well past +50%
     eng._tick()
     assert stt(eng).position is not None and stt(eng).position.remaining_qty == 4
 
@@ -219,10 +209,10 @@ def test_exit_mark_floored_at_intrinsic():
     p = FakePivot(); eng = make_engine(p)
     _cross_up_into_s1(eng, p)                       # SHORT PUT, ATM strike ~741
     p.opt_bid, p.opt_ask, p.opt_last = 0.0, 0.0, 0.10   # stale one-sided book
-    p.price = 736.8                                # put ITM ~4.2; falls into S2 target
+    p.price = 736.0                                # put ITM ~5.0 (> +50% take_at ~4.65)
     eng._tick()
     sells = [o for o in p.orders if o[0] == "SELL"]
-    assert sells and all(o[3] >= 4.0 for o in sells), f"exit below intrinsic: {sells}"
+    assert sells and all(o[3] >= 4.9 for o in sells), f"exit below intrinsic: {sells}"
 
 
 # --- zones / config --------------------------------------------------------

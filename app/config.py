@@ -112,7 +112,7 @@ class Settings:
     trade_log_path: str = field(default_factory=lambda: os.getenv("TRADE_LOG_PATH", ""))
 
     # ----- Person's Pivots strategy (second tab) -----------------------------
-    pivot_contracts: int = field(default_factory=lambda: _int("PIVOT_CONTRACTS", 4))
+    pivot_contracts: int = field(default_factory=lambda: _int("PIVOT_CONTRACTS", 10))
     # Touch band for reaching R1 / S1 / PP / target (dollars) — fallback when a
     # ticker has no zone configured below.
     pivot_proximity: float = field(default_factory=lambda: _float("PIVOT_PROXIMITY", 0.5))
@@ -125,10 +125,10 @@ class Settings:
     # Premium stop = this fraction of the entry premium lost. Default 0 = NO stop
     # (runners go pure zone-to-zone / EOD). Set >0 to re-enable + breakeven-on-scale.
     pivot_stop_pct: float = field(default_factory=lambda: _float("PIVOT_STOP_PCT", 0.0))
-    # Scale the lot down to the runner once premium is up this fraction (0.5 = +50%).
+    # Take full profit once premium is up this fraction (0.5 = +50%).
     pivot_scale_profit: float = field(default_factory=lambda: _float("PIVOT_SCALE_PROFIT", 0.5))
-    # Contracts left as the runner after scaling (rest are sold at +profit).
-    pivot_runner_qty: int = field(default_factory=lambda: _int("PIVOT_RUNNER_CONTRACTS", 1))
+    # Runner contracts kept after the take-profit. 0 = no runner (exit all at +50%).
+    pivot_runner_qty: int = field(default_factory=lambda: _int("PIVOT_RUNNER_CONTRACTS", 0))
     # (legacy) fraction scaled at the pivot — unused by the zone-fade logic.
     pivot_scale_pct: float = field(default_factory=lambda: _float("PIVOT_SCALE_PCT", 0.5))
     # VIX symbol used to compute the regime (its own daily pivot).

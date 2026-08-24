@@ -281,10 +281,11 @@ class PivotEngine:
         )
         st.state = "open"
         st.can_enter = False
-        runner = f"runner → {tgt_lab} {tgt_val:.2f}" if tgt_val is not None else "runner → no zone (stop/EOD)"
+        tp = round(fill.price * (1 + settings.pivot_scale_profit), 2)
+        plan = (f"TP +{settings.pivot_scale_profit*100:.0f}% @ {tp:.2f}" if settings.pivot_runner_qty <= 0
+                else f"scale @ +{settings.pivot_scale_profit*100:.0f}%, runner → {tgt_lab} {tgt_val:.2f}")
         st.log_event(f"ENTRY {direction} {qty}x {contract.symbol} @ {fill.price:.2f} "
-                     f"(ATM strike {contract.strike:g}; fade {level_label} {level:.2f} {approach}; "
-                     f"{runner})")
+                     f"(ATM strike {contract.strike:g}; fade {level_label} {level:.2f} {approach}; {plan})")
         self.trades.append(self._record("ENTRY", st.position, qty, fill.price, None, None))
 
     # --- management ----------------------------------------------------------
@@ -312,23 +313,28 @@ class PivotEngine:
         if time.time() - pos.entry_time < settings.pivot_min_hold_seconds:
             return
 
-        # 1) Premium stop (disabled if <0; breakeven after the scale).
+        # 1) Premium stop (disabled by default; only if PIVOT_STOP_PCT>0).
         if pos.stop_premium >= 0 and pos.current_price <= pos.stop_premium:
-            label = "breakeven stop" if pos.breakeven else "premium stop"
-            self._close(st, pos.remaining_qty, "STOP", f"{label} @ {pos.current_price:.2f}")
+            self._close(st, pos.remaining_qty, "STOP", f"premium stop @ {pos.current_price:.2f}")
             return
 
-        # 2) Scale to the runner at +PIVOT_SCALE_PROFIT (default +50%): sell all
-        #    but PIVOT_RUNNER_CONTRACTS, then move the stop to breakeven.
-        scale_at = round(pos.entry_price * (1 + settings.pivot_scale_profit), 2)
-        if not pos.scaled and pos.current_price >= scale_at:
-            take = max(0, pos.remaining_qty - max(1, settings.pivot_runner_qty))
+        # 2) Take profit: close the WHOLE position at +PIVOT_SCALE_PROFIT (+50%).
+        #    (No runner / next-zone target — the only other exit is EOD flatten.)
+        take_at = round(pos.entry_price * (1 + settings.pivot_scale_profit), 2)
+        runner = max(0, settings.pivot_runner_qty)
+        if not pos.scaled and pos.current_price >= take_at:
+            if runner <= 0:
+                self._close(st, pos.remaining_qty, "TARGET",
+                            f"+{settings.pivot_scale_profit*100:.0f}% take profit @ {pos.current_price:.2f}")
+                return
+            # (optional) scale-to-runner path, only if PIVOT_RUNNER_CONTRACTS>0
+            take = max(0, pos.remaining_qty - runner)
             if take > 0:
                 self._close(st, take, "SCALE",
                             f"+{settings.pivot_scale_profit*100:.0f}% @ {pos.current_price:.2f} "
                             f"— {take} off, {pos.remaining_qty-take} runner", keep_open=True)
             pos.scaled = True
-            if settings.pivot_stop_pct > 0:            # breakeven only if stops are on
+            if settings.pivot_stop_pct > 0:
                 pos.breakeven = True
                 pos.stop_premium = round(pos.entry_price, 2)
                 st.log_event(f"stop moved to breakeven {pos.stop_premium:.2f}")
@@ -337,9 +343,8 @@ class PivotEngine:
                 st.state = "armed"
             return
 
-        # 3) Runner exits when price reaches the NEXT zone (down for shorts, up
-        #    for longs). No next zone -> runner rides to the stop / EOD flatten.
-        if pos.target is not None:
+        # 3) Runner (only when PIVOT_RUNNER_CONTRACTS>0) exits at the next zone.
+        if runner > 0 and pos.scaled and pos.target is not None:
             hit = (price <= pos.target + half) if pos.direction == "SHORT" else (price >= pos.target - half)
             if hit:
                 self._close(st, pos.remaining_qty, "TARGET",
