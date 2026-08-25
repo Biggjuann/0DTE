@@ -66,10 +66,12 @@ class Settings:
     session_close: str = field(default_factory=lambda: os.getenv("SESSION_CLOSE", "16:00"))
     session_no_entry: str = field(default_factory=lambda: os.getenv("SESSION_NO_ENTRY", "15:45"))
     session_flatten: str = field(default_factory=lambda: os.getenv("SESSION_FLATTEN", "15:55"))
-    contracts: int = field(default_factory=lambda: _int("CONTRACTS", 1))
+    contracts: int = field(default_factory=lambda: _int("CONTRACTS", 10))
     proximity: float = field(default_factory=lambda: _float("PROXIMITY", 1.0))
-    # 0DTE call strike = mid level + this offset (dollars). Spec: $1 above mid.
-    strike_offset: float = field(default_factory=lambda: _float("STRIKE_OFFSET", 1.0))
+    # 0DTE call strike = spot (ATM) + this offset (dollars). 0 = pure ATM.
+    strike_offset: float = field(default_factory=lambda: _float("STRIKE_OFFSET", 0.0))
+    # Take FULL profit at this fraction of premium (0.5 = +50%). 0 disables.
+    take_profit_pct: float = field(default_factory=lambda: _float("TAKE_PROFIT_PCT", 0.5))
     # Minimum separation (dollars) between lower->mid and mid->top. Default 0 =
     # only require proper ordering (lower < mid < top); raise to stand aside on
     # tight channels.

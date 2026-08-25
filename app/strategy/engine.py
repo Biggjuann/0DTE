@@ -241,45 +241,22 @@ class Engine:
         else:
             self._mark_position(st)
             pos = st.position
-            if mm.status is MMStatus.LONG:
-                st.saw_long_in_trade = True
 
-            # Arm a breakeven stop once we've reached +BREAKEVEN_ARM_PROFIT
-            # (default +100%, i.e. the premium has doubled).
-            arm = settings.breakeven_arm_profit
-            if (arm > 0 and not pos.breakeven_armed and pos.entry_price > 0
-                    and pos.current_price >= pos.entry_price * (1 + arm)):
-                pos.breakeven_armed = True
-                st.log_event(f"+{arm*100:.0f}% profit (premium {pos.current_price:.2f} "
-                             f"≥ {pos.entry_price*(1+arm):.2f}) — stop moved to breakeven "
-                             f"{pos.entry_price:.2f}")
-
+            # Exits: risk first (lost approval / broke the put wall), then the
+            # profit target — take FULL profit at +TAKE_PROFIT_PCT (default +50%).
             reason = exit_type = None
+            tp_at = (round(pos.entry_price * (1 + settings.take_profit_pct), 2)
+                     if settings.take_profit_pct > 0 else None)
             if not approved:
                 exit_type = "PROTECTIVE"
                 reason = f"MM status '{mm.status.value}' lost long approval — protective exit"
             elif price < lv.lower:
-                # Stop: price broke below the put-wall (lower) level.
                 exit_type = "STOP"
-                reason = (f"STOP — price {price:.2f} below put wall {lv.lower:.2f}")
-            elif pos.breakeven_armed and pos.current_price <= pos.entry_price:
-                # Breakeven stop: premium round-tripped back to entry after +100%.
-                exit_type = "BREAKEVEN"
-                reason = (f"BREAKEVEN — premium {pos.current_price:.2f} back to entry "
-                          f"{pos.entry_price:.2f} after +{arm*100:.0f}%")
-            elif (mm.status is MMStatus.CAUTIOUS_LONG and st.saw_long_in_trade
-                  and price >= lv.mid - prox):
-                # Mid take-profit ONLY on a genuine long -> cautious-long
-                # DOWNGRADE during the trade (not when we entered on cautious).
-                exit_type = "MID"
-                reason = (f"Downgraded from long to cautious-long at/above MID "
-                          f"{lv.mid:.2f} (within ${prox:g}) — take profit at mid")
-            elif price >= lv.top - prox:
-                # Reached the top (call-wall) zone while still approved (long or
-                # cautious-long) -> take profit at the ceiling.
-                exit_type = "TOP"
-                reason = (f"Reached TOP {lv.top:.2f} (within ${prox:g}) "
-                          f"— take profit at top call wall")
+                reason = f"STOP — price {price:.2f} below put wall {lv.lower:.2f}"
+            elif tp_at is not None and pos.current_price >= tp_at:
+                exit_type = "TARGET"
+                reason = (f"+{settings.take_profit_pct*100:.0f}% take profit "
+                          f"@ {pos.current_price:.2f} (all {pos.qty})")
 
             if reason:
                 self._exit(st, reason, exit_type)
@@ -299,7 +276,8 @@ class Engine:
             st.log_event(f"ENTRY signal at lower {lv.lower:.2f} (auto-trade OFF — not sent)")
             st.state = PositionState.ARMED
             return
-        target_strike = lv.mid + settings.strike_offset
+        # ATM: strike closest to the current underlying (+ optional STRIKE_OFFSET).
+        target_strike = (st.quote.last if st.quote else lv.mid) + settings.strike_offset
         contract = self._pick_call(st.ticker, target_strike)
         if not contract:
             st.log_event("ENTRY blocked — no 0DTE call chain available")
@@ -328,9 +306,10 @@ class Engine:
         )
         st.state = PositionState.OPEN
         st.saw_long_in_trade = mm.status is MMStatus.LONG
+        tp = round(fill.price * (1 + settings.take_profit_pct), 2)
         st.log_event(f"ENTRY {settings.contracts}x {contract.symbol} @ {fill.price:.2f} "
-                     f"(strike {contract.strike:g} = mid {lv.mid:.2f}+${settings.strike_offset:g}; "
-                     f"trigger near lower {lv.lower:.2f})")
+                     f"(ATM strike {contract.strike:g}; put-wall touch {lv.lower:.2f}; "
+                     f"TP +{settings.take_profit_pct*100:.0f}% @ {tp:.2f})")
         self.trades.append(TradeRecord(
             ts=time.time(), ticker=st.ticker, action="ENTRY",
             reason=f"price within ${settings.proximity:g} of put wall + {mm.status.value}",

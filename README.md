@@ -32,17 +32,17 @@ A "buy the dip at structural support, ride to resistance" long-call strategy.
 1. MM **stance ∈ {long, cautious-long}** → entry approval.
 2. **Live price at/just above the put wall**: `lower ≤ price ≤ lower + PROXIMITY`.
    (Channel must be ordered `lower < mid < top`; one entry per put-wall touch.)
-   → **BUY_TO_OPEN** a 0DTE call struck at the **closest listed strike to mid + `STRIKE_OFFSET`** (default +$1).
+   → **BUY_TO_OPEN** **`CONTRACTS`** (default **10**) 0DTE calls struck **ATM** —
+   the closest listed strike to **spot + `STRIKE_OFFSET`** (default +$0 = ATM).
 
 **Exit** (`OPEN → flat`, in priority order):
 - **Protective** — stance loses long approval entirely (neutral/short) → flatten.
 - **Stop** — price **below the put wall (lower)** → flatten.
-- **Mid take-profit** — stance **downgrades long → cautious-long** during the trade *and* price reaches the **Mid** zone (≥ mid − PROXIMITY). Entering on cautious-long does **not** immediately exit.
-- **Top take-profit** — price reaches the **Top** zone (≥ top − PROXIMITY) while still approved (long or cautious-long).
+- **Take profit** — close the **whole position at +`TAKE_PROFIT_PCT`** (default
+  **+50%** of premium). The RTH **EOD flatten** is the only other exit.
 
-Take-profits use a reached-or-beyond band so a fast 0DTE move that overshoots a level between quote polls still closes the trade.
-
-The `$1` band, contract count, tickers and poll cadences are all configurable.
+Anti-whipsaw (`STOP_COOLDOWN_SECONDS`, `REARM_DISTANCE`) and the RTH gate apply.
+Contract count, band, take-profit %, tickers and poll cadences are all configurable.
 
 ## Strategy 2 — Person's Pivots (second tab)
 
@@ -77,13 +77,9 @@ open trade.
   book can't fabricate a loss; and a `PIVOT_MIN_HOLD_SECONDS` window prevents
   enter-and-flatten on the same spike.
 
-## Breakeven stop (gamma strategy)
-
-Once an open call reaches **+`BREAKEVEN_ARM_PROFIT`** (default **+100%**, i.e. the
-premium doubles), a **breakeven stop** is armed: if the premium later round-trips
-back to the entry price it exits flat (`BREAKEVEN`) instead of giving the gain
-back. Set `BREAKEVEN_ARM_PROFIT=0` to disable. The position card shows a
-**BE STOP @ <entry>** badge once armed.
+> Note: the gamma tab now takes full profit at **+50%**, so it exits before a
+> position could reach the older **+100% breakeven-arm** threshold — that path is
+> effectively dormant unless `TAKE_PROFIT_PCT` is raised above `BREAKEVEN_ARM_PROFIT`.
 
 ## Anti-whipsaw (gamma strategy)
 

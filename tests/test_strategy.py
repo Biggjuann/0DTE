@@ -53,10 +53,10 @@ def make_engine(p):
     settings.rth_only = False   # mechanics tests run regardless of wall-clock time
     settings.stop_cooldown_seconds = 0   # off unless a test enables it
     settings.rearm_distance = 0.0        # 0 = use proximity
-    settings.breakeven_arm_profit = 1.0  # arm BE stop at +100%
     settings.proximity = 1.0
     settings.contracts = 1
-    settings.strike_offset = 1.0
+    settings.strike_offset = 0.0         # ATM (strike closest to spot)
+    settings.take_profit_pct = 0.5       # take full profit at +50%
     # Re-poll every tick so scripted state changes are picked up immediately.
     settings.levels_poll_seconds = 0
     settings.mm_poll_seconds = 0
@@ -91,8 +91,19 @@ def test_entry_at_putwall_when_long():
     p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4  # within $1 of put wall 525
     eng = make_engine(p); eng._tick()
     assert st(eng).state is PositionState.OPEN
-    assert st(eng).position.strike == 533.0  # strike == mid (532) + $1 offset
-    assert ("BUY", "QQQ_C533", 1) in p.orders
+    assert st(eng).position.strike == 525.0  # ATM: strike closest to spot (525.4)
+    assert ("BUY", "QQQ_C525", 1) in p.orders
+
+
+def test_take_profit_all_at_50pct():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4   # enter, ATM strike 525
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    p.price = 527.0                                                   # premium 1.3 -> ~3.0 (>+50%)
+    eng._tick()
+    assert st(eng).position is None, "whole position exits at +50%"
+    assert "take profit" in st(eng).last_event.lower()
+    assert any(o[0] == "SELL" for o in p.orders)
 
 
 def test_entry_at_putwall_when_cautious_long():
@@ -127,16 +138,6 @@ def test_no_entry_on_inverted_channel():
     assert st(eng).position is None
 
 
-def test_no_mid_exit_when_entered_cautious_no_downgrade():
-    # Entered on cautious-long (never long): mid exit must NOT fire even at mid.
-    p = ScriptProvider(); p.status = MMStatus.CAUTIOUS_LONG; p.price = 525.2
-    eng = make_engine(p); eng._tick()
-    assert st(eng).state is PositionState.OPEN
-    p.price = 531.8  # at/above mid (532) while still cautious, no downgrade
-    eng._tick()
-    assert st(eng).position is not None, "no downgrade from long -> must hold"
-
-
 def test_no_reentry_churn_same_touch():
     p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4
     eng = make_engine(p); eng._tick()
@@ -153,32 +154,6 @@ def test_no_reentry_churn_same_touch():
     assert len([o for o in p.orders if o[0] == "BUY"]) == n + 1
 
 
-def test_exit_at_mid_on_downgrade():
-    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.2
-    eng = make_engine(p); eng._tick()
-    assert st(eng).state is PositionState.OPEN
-    # Price climbs to mid and status downgrades -> exit at mid
-    p.price = 531.8; p.status = MMStatus.CAUTIOUS_LONG
-    eng._tick()
-    assert st(eng).position is None
-    assert any(o[0] == "SELL" for o in p.orders)
-
-
-def test_hold_to_top_while_long():
-    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
-    eng = make_engine(p); eng._tick()
-    assert st(eng).state is PositionState.OPEN
-    # At mid but STILL long -> must NOT exit
-    p.price = 532.0
-    eng._tick()
-    assert st(eng).state is PositionState.OPEN, "should hold through mid while LONG"
-    # Reaches top while long -> exit at top
-    p.price = 539.6
-    eng._tick()
-    assert st(eng).position is None
-    assert any(o[0] == "SELL" for o in p.orders)
-
-
 def test_stop_when_close_below_lower():
     p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0  # near lower
     eng = make_engine(p); eng._tick()
@@ -189,17 +164,6 @@ def test_stop_when_close_below_lower():
     assert st(eng).position is None
     assert any(o[0] == "SELL" for o in p.orders)
     assert "STOP" in st(eng).last_event
-
-
-def test_top_exit_fires_when_in_top_zone():
-    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
-    eng = make_engine(p); eng._tick()
-    assert st(eng).state is PositionState.OPEN
-    # price reaches the top zone (within $1 of top 540) while long -> exit at top
-    p.price = 539.2
-    eng._tick()
-    assert st(eng).position is None
-    assert "top" in st(eng).last_event.lower()
 
 
 def test_strike_picks_closest_available_not_nearest_dollar():
@@ -260,43 +224,6 @@ def test_wide_rearm_distance_prevents_rearm():
     p.price = 527.0; eng._tick()                       # within band -> NOT re-armed
     p.price = 525.0; eng._tick()                       # re-touch wall
     assert st(eng).position is None, "wide re-arm band should suppress the re-touch"
-
-
-def test_breakeven_arms_at_100pct_and_stops_at_entry():
-    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0   # enter (strike 533)
-    eng = make_engine(p)
-    settings.breakeven_arm_profit = 1.0
-    eng._tick()
-    assert st(eng).state is PositionState.OPEN
-    entry = st(eng).position.entry_price                              # 1.30 (ask)
-    p.price = 535.0; eng._tick()                                      # premium ~3.0 = +130%
-    assert st(eng).position.breakeven_armed, "must arm BE once premium doubles"
-    p.price = 533.0; eng._tick()                                      # premium ~1.0 <= entry
-    assert st(eng).position is None, "premium back to entry after +100% -> breakeven exit"
-    assert "BREAKEVEN" in st(eng).last_event
-    assert entry == 1.30
-
-
-def test_breakeven_not_armed_below_threshold():
-    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
-    eng = make_engine(p)
-    settings.breakeven_arm_profit = 1.0
-    eng._tick()
-    p.price = 534.0; eng._tick()                                      # premium ~2.0 < 2.6 (=2x)
-    assert not st(eng).position.breakeven_armed
-    p.price = 533.0; eng._tick()                                      # back to entry, but not armed
-    assert st(eng).position is not None, "no breakeven exit until it was armed at +100%"
-
-
-def test_breakeven_disabled_when_zero():
-    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
-    eng = make_engine(p)
-    settings.breakeven_arm_profit = 0.0                              # disabled
-    eng._tick()
-    p.price = 535.0; eng._tick()                                      # +130%
-    assert not st(eng).position.breakeven_armed
-    p.price = 533.0; eng._tick()
-    assert st(eng).position is not None, "BE disabled -> no breakeven stop"
 
 
 if __name__ == "__main__":

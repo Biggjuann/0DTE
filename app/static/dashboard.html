@@ -359,17 +359,17 @@ function position(t){
   const p=t.position;
   if(!p){
     const lv=t.levels;
-    if(t.state==='armed'&&lv) return `<div class="targets">Armed · entry trigger near lower <b>${fmt(lv.lower)}</b> · strike would be mid+$${window.SOFF||1} <b>${fmt(lv.mid+(window.SOFF||1))}</b></div>`;
+    if(t.state==='armed'&&lv) return `<div class="targets">Armed · entry at put wall <b>${fmt(lv.lower)}</b> · ${window.GCONTRACTS||10} ATM calls · TP +50%</div>`;
     return '';
   }
   const cls=t.pnl>=0?'pnl-pos':'pnl-neg', lv=t.levels;
-  const be=p.breakeven_armed?` <span class="pill2 pill-be">BE STOP @ ${fmt(p.entry_price)}</span>`:'';
+  const tp=p.entry_price*1.5;
   return `<div class="pos">
-    <div class="row"><span>Contract</span><span class="mono">${p.contract_symbol}${be}</span></div>
+    <div class="row"><span>Contract (ATM)</span><span class="mono">${p.contract_symbol}</span></div>
     <div class="row"><span>Strike / Qty</span><span class="mono">${fmt(p.strike)} × ${p.qty}</span></div>
     <div class="row"><span>Entry → Now</span><span class="mono">${fmt(p.entry_price)} → ${fmt(p.current_price)}</span></div>
     <div class="row"><span>P&amp;L</span><span class="mono ${cls}">${money(t.pnl)} (${fmt(t.pnl_pct,1)}%)</span></div>
-    ${lv?`<div class="targets">Exit: top <b>${fmt(lv.top)}</b> · mid <b>${fmt(lv.mid)}</b> (downgrade) · stop&lt; <b>${fmt(lv.lower)}</b>${p.breakeven_armed?` · <b>breakeven ${fmt(p.entry_price)}</b>`:''}</div>`:''}
+    ${lv?`<div class="targets">Take profit <b>+50% (${fmt(tp)})</b> · stop&lt; put wall <b>${fmt(lv.lower)}</b></div>`:''}
   </div>`;
 }
 
@@ -396,6 +396,7 @@ function render(s){
   window.gammaSnap=s;
   window.PROX=s.proximity;
   window.SOFF=s.strike_offset;
+  window.GCONTRACTS=s.contracts;
   window.SRV=s.server_time;
   window.gammaSrc=(s.mode==='live'?`· data: ${s.market_data_provider}`:'· data: mock');
 
