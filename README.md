@@ -60,8 +60,11 @@ open trade.
   - **From above** (price falling into the zone) → **long**: buy **10 ATM calls**.
   - Size via `PIVOT_CONTRACTS` (default 10).
 - **Take profit**: close the **whole position at +50%** (`PIVOT_SCALE_PROFIT`).
-  No runner by default (`PIVOT_RUNNER_CONTRACTS=0`); the only other exit is the
-  RTH **EOD flatten**.
+- **Break stop**: if the fade fails and price runs **$1 past the zone** against it
+  (`PIVOT_BREAK_STOP`, up for shorts / down for longs), cut the position. The
+  level is locked at entry (`zone edge ± $1`).
+- No runner by default (`PIVOT_RUNNER_CONTRACTS=0`); the other exit is the RTH
+  **EOD flatten**.
 - **No stop by default** (`PIVOT_STOP_PCT=0`). Set `PIVOT_RUNNER_CONTRACTS>0` to
   keep a runner (scales the rest at +50%, runs it to the next zone) or
   `PIVOT_STOP_PCT>0` to re-enable a premium stop.

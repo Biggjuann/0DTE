@@ -271,12 +271,18 @@ class PivotEngine:
             return
         qty = settings.pivot_contracts
         stop = round(fill.price * (1 - settings.pivot_stop_pct), 2) if settings.pivot_stop_pct > 0 else -1.0
+        # Break stop: $PIVOT_BREAK_STOP past the far edge of the zone (fade failed).
+        half = settings.pivot_zone_half(st.ticker)
+        bs = settings.pivot_break_stop
+        break_stop = None
+        if bs > 0:
+            break_stop = round(level + half + bs, 2) if direction == "SHORT" else round(level - half - bs, 2)
         st.position = PivotPosition(
             ticker=st.ticker, direction=direction, option_type=option_type,
             contract_symbol=contract.symbol, strike=contract.strike, expiry=contract.expiry,
             qty=qty, remaining_qty=qty, entry_price=fill.price, entry_time=time.time(),
             entry_underlying=under, pp=level, target=tgt_val,
-            entry_zone_label=level_label, target_label=tgt_lab,
+            entry_zone_label=level_label, target_label=tgt_lab, break_stop=break_stop,
             current_price=fill.price, last_underlying=under, stop_premium=stop,
         )
         st.state = "open"
@@ -284,8 +290,9 @@ class PivotEngine:
         tp = round(fill.price * (1 + settings.pivot_scale_profit), 2)
         plan = (f"TP +{settings.pivot_scale_profit*100:.0f}% @ {tp:.2f}" if settings.pivot_runner_qty <= 0
                 else f"scale @ +{settings.pivot_scale_profit*100:.0f}%, runner → {tgt_lab} {tgt_val:.2f}")
+        bstop = f"; break stop {st.position.break_stop:.2f}" if st.position.break_stop is not None else ""
         st.log_event(f"ENTRY {direction} {qty}x {contract.symbol} @ {fill.price:.2f} "
-                     f"(ATM strike {contract.strike:g}; fade {level_label} {level:.2f} {approach}; {plan})")
+                     f"(ATM strike {contract.strike:g}; fade {level_label} {level:.2f} {approach}; {plan}{bstop})")
         self.trades.append(self._record("ENTRY", st.position, qty, fill.price, None, None))
 
     # --- management ----------------------------------------------------------
@@ -313,7 +320,17 @@ class PivotEngine:
         if time.time() - pos.entry_time < settings.pivot_min_hold_seconds:
             return
 
-        # 1) Premium stop (disabled by default; only if PIVOT_STOP_PCT>0).
+        # 1) BREAK STOP: the fade failed — price ran $PIVOT_BREAK_STOP past the
+        #    zone against us (up for shorts, down for longs) -> cut it.
+        if pos.break_stop is not None:
+            broke = (price >= pos.break_stop) if pos.direction == "SHORT" else (price <= pos.break_stop)
+            if broke:
+                self._close(st, pos.remaining_qty, "STOP",
+                            f"break stop — price {price:.2f} {'above' if pos.direction=='SHORT' else 'below'} "
+                            f"{pos.entry_zone_label} zone by ${settings.pivot_break_stop:g} ({pos.break_stop:.2f})")
+                return
+
+        # 2) Premium stop (disabled by default; only if PIVOT_STOP_PCT>0).
         if pos.stop_premium >= 0 and pos.current_price <= pos.stop_premium:
             self._close(st, pos.remaining_qty, "STOP", f"premium stop @ {pos.current_price:.2f}")
             return

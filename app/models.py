@@ -224,6 +224,7 @@ class PivotPosition:
     target: Optional[float] = None   # runner exit level (next zone), None if none
     entry_zone_label: str = ""       # e.g. "R1"
     target_label: str = ""           # e.g. "PP"
+    break_stop: Optional[float] = None  # exit price if the fade breaks the zone
     current_price: float = 0.0
     last_underlying: float = 0.0
     scaled: bool = False         # the 3 lots taken at +50%

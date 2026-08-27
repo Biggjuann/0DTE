@@ -76,6 +76,7 @@ def make_engine(p):
     settings.pivot_scale_pct = 0.5
     settings.pivot_scale_profit = 0.5       # take full profit at +50%
     settings.pivot_runner_qty = 0           # no runner (exit all)
+    settings.pivot_break_stop = 1.0         # exit if price runs $1 past the zone
     settings.pivot_min_hold_seconds = 0.0   # off unless a test enables it
     settings.pivot_max_dev_pct = 0.03
     settings.pivot_max_jump_pct = 0.02
@@ -170,6 +171,30 @@ def test_take_full_profit_at_50pct():
     sells = [o for o in p.orders if o[0] == "SELL"]
     assert sells and sells[0][2] == 4, "sell all 4 at once"
     assert "take profit" in stt(eng).last_event.lower()
+
+
+def test_break_stop_short_exits_on_upside_break():
+    p = FakePivot(); eng = make_engine(p)
+    _cross_up_into_s1(eng, p)                       # SHORT at S1, break stop = S1+half+1
+    pos = stt(eng).position
+    assert abs(pos.break_stop - (741.47 + 0.375 + 1.0)) < 0.05   # ~742.845
+    p.price = 743.0                                 # >$1 above the S1 zone -> break
+    eng._tick()
+    assert stt(eng).position is None, "fade failed -> break stop cuts it"
+    assert "break stop" in stt(eng).last_event.lower()
+
+
+def test_break_stop_long_exits_on_downside_break():
+    p = FakePivot(); eng = make_engine(p)
+    p.price = 745.0; eng._tick()                    # above PP zone
+    p.price = 744.0; eng._tick()                    # into PP from above -> LONG
+    pos = stt(eng).position
+    assert pos.direction == "LONG"
+    assert abs(pos.break_stop - (743.94 - 0.375 - 1.0)) < 0.05   # ~742.565
+    p.price = 742.4                                 # >$1 below the PP zone -> break
+    eng._tick()
+    assert stt(eng).position is None
+    assert "break stop" in stt(eng).last_event.lower()
 
 
 def test_no_exit_below_50pct_or_at_next_zone():

@@ -131,6 +131,9 @@ class Settings:
     pivot_scale_profit: float = field(default_factory=lambda: _float("PIVOT_SCALE_PROFIT", 0.5))
     # Runner contracts kept after the take-profit. 0 = no runner (exit all at +50%).
     pivot_runner_qty: int = field(default_factory=lambda: _int("PIVOT_RUNNER_CONTRACTS", 0))
+    # Break stop: exit if price runs this far ($) PAST the zone against the fade
+    # (the fade failed / broke through). 0 disables.
+    pivot_break_stop: float = field(default_factory=lambda: _float("PIVOT_BREAK_STOP", 1.0))
     # (legacy) fraction scaled at the pivot — unused by the zone-fade logic.
     pivot_scale_pct: float = field(default_factory=lambda: _float("PIVOT_SCALE_PCT", 0.5))
     # VIX symbol used to compute the regime (its own daily pivot).

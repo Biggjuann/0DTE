@@ -438,7 +438,7 @@ function pivotRegime(s){
   el.className='banner zoneinfo';
   const tf=(s.timeframe||'weekly').toUpperCase();
   el.textContent=`ZONE FADE (${tf} pivots) — into a zone from BELOW → short puts · from ABOVE → long calls  ·  `
-    +`${s.contracts} ATM, take full profit at +50%${vix}`;
+    +`${s.contracts} ATM, take profit +50%, break stop $1 past the zone${vix}`;
 }
 
 function pivotLadder(pv,price,zoneW){
@@ -477,16 +477,16 @@ function pivotPosition(t){
   const dirPill=p.direction==='SHORT'?'pill-short':'pill-long';
   const tot=t.total_pnl, opc=tot>=0?'pnl-pos':'pnl-neg';
   const tp=(p.entry_price*1.5);
-  const stop=p.stop_premium>=0?`${fmt(p.stop_premium)} prem`:'off';
+  const brk=p.break_stop!=null?fmt(p.break_stop):'off';
   return `<div class="pos">
     <div class="row"><span>Position</span><span><span class="pill2 ${dirPill}">${p.direction} ${p.option_type}</span></span></div>
     <div class="row"><span>Contract (ATM)</span><span class="mono">${p.contract_symbol}</span></div>
     <div class="row"><span>Faded zone</span><span class="mono">${p.entry_zone_label} ${fmt(p.pp)}</span></div>
     <div class="row"><span>Qty (rem / init)</span><span class="mono">${p.remaining_qty} / ${p.qty}</span></div>
     <div class="row"><span>Entry → Now</span><span class="mono">${fmt(p.entry_price)} → ${fmt(p.current_price)}</span></div>
-    <div class="row"><span>Target / Stop</span><span class="mono">+50% (${fmt(tp)}) · ${stop}</span></div>
+    <div class="row"><span>Target / Break stop</span><span class="mono">+50% (${fmt(tp)}) · ${brk}</span></div>
     <div class="row"><span>P&amp;L</span><span class="mono ${opc}">${money(t.total_pnl)}</span></div>
-    <div class="targets">Take full profit at +50% (${fmt(tp)}) · else EOD flatten</div>
+    <div class="targets">Take profit +50% (${fmt(tp)}) · break stop if price runs $1 past the zone · else EOD</div>
   </div>`;
 }
 
