@@ -3,25 +3,26 @@
 Per-ticker state machine
 =========================
 
-    DISABLED  MM status is not long / cautious-long -> no approval.
-    ARMED     Approved (long or cautious-long) + bull-control flow, waiting
-              for price to close within $1 of the LOWER level (lowest put wall)
-              on the 1-minute chart.
-    OPEN      Holding a long 0DTE call struck at the MID level.
+    DISABLED  MM status is not long / cautious-long (or levels inverted).
+    ARMED     Approved (long or cautious-long), waiting for price to reach the
+              put wall (lower level).
+    OPEN      Holding a long 0DTE call struck at (MID + STRIKE_OFFSET).
 
-Entry  (FLAT/ARMED -> OPEN)
-    status in {LONG, CAUTIOUS_LONG}                     (approval)
-    AND bull_control (puts below spot > calls >= spot)  (flow confirmation)
-    AND |minute_close - lower| <= PROXIMITY             (1-min trigger)
-        -> BUY_TO_OPEN 0DTE call, strike = nearest to MID level.
+Entry  (FLAT/ARMED -> OPEN) — the ONLY conditions for a long:
+    status in {LONG, CAUTIOUS_LONG}                 (approval)
+    AND lower <= live price <= lower + PROXIMITY     (at/just above the put wall)
+    plus: valid channel (lower < mid < top) and a one-entry-per-touch latch.
+        -> BUY_TO_OPEN 0DTE call, strike = closest listed to (MID + STRIKE_OFFSET).
 
-Exit  (OPEN -> flat)
-    a) status downgrades to CAUTIOUS_LONG (from LONG) and |price - mid| <= $1
-         -> take profit at the MID level.
-    b) status stays LONG and |price - top| <= $1
-         -> take profit at the TOP level (largest call wall).
-    c) status loses long approval entirely (neutral/short)
-         -> protective exit.
+Exit  (OPEN -> flat), checked in priority order
+    a) status loses long approval entirely (neutral/short) -> protective exit.
+    b) price below the put wall (lower)                    -> STOP.
+    c) status DOWNGRADES long -> cautious-long during the trade and
+       price >= mid - PROXIMITY                            -> take profit at MID.
+    d) price >= top - PROXIMITY while still approved        -> take profit at TOP.
+Take-profits use a reached-or-beyond band so a fast 0DTE move that overshoots
+the level between quote polls still closes the trade. The MID exit needs a real
+downgrade, so entering on cautious-long does not immediately exit.
 """
 from __future__ import annotations
 
@@ -31,6 +32,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from app import market_hours
 from app.clients.factory import Providers, build_providers
 from app.config import settings
 from app.models import (Levels, MMSignal, MMStatus, OptionContract, Position,
@@ -50,6 +52,9 @@ class TickerState:
     position: Optional[Position] = None
     prev_status: Optional[MMStatus] = None
     saw_long_in_trade: bool = False
+    can_enter: bool = True       # re-arm latch: one entry per put-wall touch
+    cooldown_until: float = 0.0  # anti-whipsaw: no re-entry until this time
+    quote_error: Optional[str] = None
     last_event: str = "waiting for data"
     events: List[str] = field(default_factory=list)
     updated: float = field(default_factory=time.time)
@@ -97,7 +102,7 @@ class Engine:
         with self._lock:
             for st in self.states.values():
                 if st.position:
-                    self._exit(st, "KILL SWITCH — flatten all")
+                    self._exit(st, "KILL SWITCH — flatten all", "KILL")
             self.auto_trade = False
         log.warning("KILL SWITCH engaged")
 
@@ -128,6 +133,10 @@ class Engine:
                     q = self.providers.market.get_quote(ticker)
                     if q:
                         st.quote = q
+                        st.quote_error = None
+                    else:
+                        st.quote_error = (getattr(self.providers.market, "last_error", None)
+                                          or "quote feed returned nothing")
                     self._last_quote[ticker] = now
                 self._evaluate(st)
                 st.updated = now
@@ -144,6 +153,7 @@ class Engine:
             st.position.current_price = c.mid
         if st.quote:
             st.position.last_underlying = st.quote.last
+        st.position.update_excursions()
 
     # --- the state machine ---------------------------------------------------
     def _evaluate(self, st: TickerState) -> None:
@@ -152,55 +162,113 @@ class Engine:
 
         mm, lv, q = st.mm, st.levels, st.quote
         approved = mm.status.approves_entry
-        price_close = q.minute_close
         price = q.last
+        prox = settings.proximity
+
+        # RTH gate: 0DTE trades only during the regular session. Outside it,
+        # flatten any open position and never enter.
+        ph = market_hours.phase()
+        if market_hours.should_flatten(ph):
+            if st.position:
+                why = "session close" if ph == market_hours.FLATTEN else "outside RTH"
+                self._exit(st, f"{why} — flatten 0DTE ({market_hours.label()})", "EOD")
+            else:
+                msg = f"market closed ({market_hours.label()}) — idle"
+                if st.last_event != msg:
+                    st.log_event(msg)
+                st.state = PositionState.DISABLED
+            st.prev_status = mm.status
+            return
+        entries_open = market_hours.entries_allowed(ph)  # False during 'late'
+        # The channel must be properly ordered (lower < mid < top). MIN_CHANNEL_GAP
+        # (default 0) can additionally require separation between the legs.
+        gap = settings.min_channel_gap
+        valid_channel = (lv.lower < lv.mid < lv.top
+                         and (lv.mid - lv.lower) >= gap
+                         and (lv.top - lv.mid) >= gap)
 
         if st.position is None:
+            # Re-arm latch: once price leaves the put-wall band (upward) we are
+            # allowed one entry on the next touch. This prevents re-entering the
+            # same touch over and over. REARM_DISTANCE (default = proximity) can
+            # widen the band so a noisy hover at the wall doesn't keep re-arming.
+            rearm = settings.rearm_distance or prox
+            if price > lv.lower + rearm:
+                st.can_enter = True
+            in_cooldown = time.time() < st.cooldown_until
+
             if not approved:
-                if st.state != PositionState.DISABLED:
-                    st.log_event(f"MM status '{mm.status.value}' — trading disabled")
+                msg = f"MM status '{mm.status.value}' — no long approval"
+                if st.last_event != msg:
+                    st.log_event(msg)
+                st.state = PositionState.DISABLED
+            elif not valid_channel:
+                msg = (f"levels inverted (lower {lv.lower:.2f} / "
+                       f"mid {lv.mid:.2f} / top {lv.top:.2f}) — standing aside")
+                if st.last_event != msg:
+                    st.log_event(msg)
                 st.state = PositionState.DISABLED
             else:
-                confirm = mm.bull_control
-                trigger = self._near(price_close, lv.lower)
-                if trigger and confirm:
+                # THE entry rule: live price at/within $PROX above the put wall
+                # (lower) AND stance is long or cautious-long. We require price at
+                # or above the wall so we don't enter into an immediate stop.
+                at_putwall = lv.lower <= price <= lv.lower + prox
+                if at_putwall and st.can_enter and entries_open and not in_cooldown:
                     self._enter(st)
+                    st.can_enter = False
+                elif at_putwall and st.can_enter and in_cooldown:
+                    left = int(st.cooldown_until - time.time())
+                    msg = f"signal at put wall but in stop-cooldown ({left}s left) — standing aside"
+                    if st.last_event != msg:
+                        st.log_event(msg)
+                    st.state = PositionState.ARMED
+                elif at_putwall and st.can_enter and not entries_open:
+                    msg = f"signal at put wall but late session ({market_hours.label()}) — no new entries"
+                    if st.last_event != msg:
+                        st.log_event(msg)
+                    st.state = PositionState.ARMED
                 else:
                     if st.state != PositionState.ARMED:
-                        why = []
-                        if not trigger:
-                            why.append(f"close {price_close:.2f} not within "
-                                       f"${settings.proximity:g} of lower {lv.lower:.2f}")
-                        if not confirm:
-                            why.append("flow not bull-control")
-                        st.log_event(f"ARMED ({mm.status.value}); waiting — {', '.join(why)}")
+                        if price < lv.lower:
+                            why = f"price {price:.2f} below put wall {lv.lower:.2f}"
+                        elif not at_putwall:
+                            why = (f"price {price:.2f} not within ${prox:g} above "
+                                   f"put wall {lv.lower:.2f}")
+                        else:
+                            why = "awaiting price to leave & re-touch put wall"
+                        st.log_event(f"ARMED ({mm.status.value}); waiting — {why}")
                     st.state = PositionState.ARMED
         else:
             self._mark_position(st)
-            if mm.status is MMStatus.LONG:
-                st.saw_long_in_trade = True
+            pos = st.position
 
-            reason = None
+            # Exits: risk first (lost approval / broke the put wall), then the
+            # profit target — take FULL profit at +TAKE_PROFIT_PCT (default +50%).
+            reason = exit_type = None
+            tp_at = (round(pos.entry_price * (1 + settings.take_profit_pct), 2)
+                     if settings.take_profit_pct > 0 else None)
             if not approved:
+                exit_type = "PROTECTIVE"
                 reason = f"MM status '{mm.status.value}' lost long approval — protective exit"
-            elif mm.status is MMStatus.CAUTIOUS_LONG and self._near(price, lv.mid):
-                reason = (f"Downgraded to cautious-long within ${settings.proximity:g} of "
-                          f"MID {lv.mid:.2f} — take profit at mid")
-            elif mm.status is MMStatus.LONG and self._near(price, lv.top):
-                reason = (f"Held LONG to within ${settings.proximity:g} of TOP "
-                          f"{lv.top:.2f} — take profit at top")
+            elif price < lv.lower:
+                exit_type = "STOP"
+                reason = f"STOP — price {price:.2f} below put wall {lv.lower:.2f}"
+            elif tp_at is not None and pos.current_price >= tp_at:
+                exit_type = "TARGET"
+                reason = (f"+{settings.take_profit_pct*100:.0f}% take profit "
+                          f"@ {pos.current_price:.2f} (all {pos.qty})")
 
             if reason:
-                self._exit(st, reason)
+                self._exit(st, reason, exit_type)
 
         st.prev_status = mm.status
 
     # --- order actions -------------------------------------------------------
-    def _pick_call(self, ticker: str, mid: float) -> Optional[OptionContract]:
-        chain = self.providers.market.get_0dte_calls(ticker, near_strike=mid)
+    def _pick_call(self, ticker: str, target_strike: float) -> Optional[OptionContract]:
+        chain = self.providers.market.get_0dte_calls(ticker, near_strike=target_strike)
         if not chain:
             return None
-        return min(chain, key=lambda c: abs(c.strike - mid))
+        return min(chain, key=lambda c: abs(c.strike - target_strike))
 
     def _enter(self, st: TickerState) -> None:
         lv, mm = st.levels, st.mm
@@ -208,7 +276,9 @@ class Engine:
             st.log_event(f"ENTRY signal at lower {lv.lower:.2f} (auto-trade OFF — not sent)")
             st.state = PositionState.ARMED
             return
-        contract = self._pick_call(st.ticker, lv.mid)
+        # ATM: strike closest to the current underlying (+ optional STRIKE_OFFSET).
+        target_strike = (st.quote.last if st.quote else lv.mid) + settings.strike_offset
+        contract = self._pick_call(st.ticker, target_strike)
         if not contract:
             st.log_event("ENTRY blocked — no 0DTE call chain available")
             st.state = PositionState.ARMED
@@ -229,18 +299,27 @@ class Engine:
             entry_underlying=st.quote.last,
             current_price=fill.price,
             last_underlying=st.quote.last,
+            entry_lower=lv.lower, entry_mid=lv.mid, entry_top=lv.top,
+            entry_stance=mm.status.value, entry_bull_control=mm.bull_control,
+            max_premium=fill.price, min_premium=fill.price,
+            max_underlying=st.quote.last, min_underlying=st.quote.last,
         )
         st.state = PositionState.OPEN
         st.saw_long_in_trade = mm.status is MMStatus.LONG
+        tp = round(fill.price * (1 + settings.take_profit_pct), 2)
         st.log_event(f"ENTRY {settings.contracts}x {contract.symbol} @ {fill.price:.2f} "
-                     f"(strike {contract.strike:g} = mid; trigger near lower {lv.lower:.2f})")
+                     f"(ATM strike {contract.strike:g}; put-wall touch {lv.lower:.2f}; "
+                     f"TP +{settings.take_profit_pct*100:.0f}% @ {tp:.2f})")
         self.trades.append(TradeRecord(
-            ts=time.time(), ticker=st.ticker, action="ENTRY", reason="lower-level trigger + bull control",
+            ts=time.time(), ticker=st.ticker, action="ENTRY",
+            reason=f"price within ${settings.proximity:g} of put wall + {mm.status.value}",
             underlying=st.quote.last, contract_symbol=contract.symbol, strike=contract.strike,
             qty=settings.contracts, price=fill.price, dry_run=settings.dry_run,
+            stance=mm.status.value, bull_control=mm.bull_control,
+            lower=lv.lower, mid=lv.mid, top=lv.top,
         ))
 
-    def _exit(self, st: TickerState, reason: str) -> None:
+    def _exit(self, st: TickerState, reason: str, exit_type: Optional[str] = None) -> None:
         pos = st.position
         if not pos:
             return
@@ -253,15 +332,26 @@ class Engine:
             st.log_event(f"EXIT rejected by broker: {fill.message}")
             return
         pnl = round((fill.price - pos.entry_price) * 100 * pos.qty, 2)
+        underlying = st.quote.last if st.quote else pos.last_underlying
         st.log_event(f"EXIT {pos.contract_symbol} @ {fill.price:.2f}  P&L ${pnl:+.2f} — {reason}")
         self.trades.append(TradeRecord(
-            ts=time.time(), ticker=st.ticker, action="EXIT", reason=reason,
-            underlying=st.quote.last if st.quote else pos.last_underlying,
-            contract_symbol=pos.contract_symbol, strike=pos.strike, qty=pos.qty,
+            ts=time.time(), ticker=st.ticker, action="EXIT", reason=reason, exit_type=exit_type,
+            underlying=underlying, contract_symbol=pos.contract_symbol, strike=pos.strike, qty=pos.qty,
             price=fill.price, pnl=pnl, dry_run=settings.dry_run,
+            stance=st.mm.status.value if st.mm else None,
+            bull_control=st.mm.bull_control if st.mm else None,
+            lower=pos.entry_lower, mid=pos.entry_mid, top=pos.entry_top,
+            entry_price=pos.entry_price, entry_underlying=pos.entry_underlying,
+            entry_stance=pos.entry_stance,
+            hold_seconds=round(time.time() - pos.entry_time, 1),
+            mae=pos.mae, mfe=pos.mfe,
         ))
         st.position = None
         st.saw_long_in_trade = False
+        # Anti-whipsaw: after a STOP, sit out for STOP_COOLDOWN_SECONDS so a price
+        # hovering at the put wall can't churn enter/stop repeatedly.
+        if exit_type == "STOP" and settings.stop_cooldown_seconds > 0:
+            st.cooldown_until = time.time() + settings.stop_cooldown_seconds
         st.state = PositionState.ARMED if (st.mm and st.mm.status.approves_entry) else PositionState.DISABLED
 
     # --- snapshot for the dashboard -----------------------------------------
@@ -276,6 +366,7 @@ class Engine:
                     "mm": to_jsonable(st.mm) if st.mm else None,
                     "bull_control": st.mm.bull_control if st.mm else None,
                     "quote": to_jsonable(st.quote) if st.quote else None,
+                    "quote_error": st.quote_error,
                     "position": to_jsonable(st.position) if st.position else None,
                     "pnl": st.position.pnl if st.position else None,
                     "pnl_pct": st.position.pnl_pct if st.position else None,
@@ -289,7 +380,11 @@ class Engine:
                 "running": self.running,
                 "auto_trade": self.auto_trade,
                 "contracts": settings.contracts,
+                "session": market_hours.info(),
                 "proximity": settings.proximity,
+                "strike_offset": settings.strike_offset,
+                "market_data_provider": (settings.market_data_provider if self.providers.mode == "live" else "mock"),
+                "options_provider": (settings.options_provider if self.providers.mode == "live" else "mock"),
                 "tickers": tickers,
                 "trades": self.trades.recent(40),
                 "summary": self.trades.summary(),

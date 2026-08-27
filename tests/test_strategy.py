@@ -50,13 +50,23 @@ class ScriptProvider:
 
 def make_engine(p):
     settings.tickers = ["QQQ"]
+    settings.rth_only = False   # mechanics tests run regardless of wall-clock time
+    settings.stop_cooldown_seconds = 0   # off unless a test enables it
+    settings.rearm_distance = 0.0        # 0 = use proximity
     settings.proximity = 1.0
     settings.contracts = 1
+    settings.strike_offset = 0.0         # ATM (strike closest to spot)
+    settings.take_profit_pct = 0.5       # take full profit at +50%
     # Re-poll every tick so scripted state changes are picked up immediately.
     settings.levels_poll_seconds = 0
     settings.mm_poll_seconds = 0
     settings.quote_poll_seconds = 0
     eng = Engine(providers=Providers(levels=p, mm=p, market=p, broker=p, mode="test"))
+    # Isolate the trade log to a throwaway temp file so tests never touch the
+    # app's real data/trades.json.
+    import tempfile
+    from app.store import TradeLog
+    eng.trades = TradeLog(path=tempfile.mktemp(suffix=".json"))
     return eng
 
 
@@ -77,46 +87,96 @@ def test_no_entry_until_near_lower():
     assert st(eng).position is None
 
 
-def test_entry_triggers_at_lower_with_bull_control():
-    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4  # within $1 of lower 525
+def test_entry_at_putwall_when_long():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4  # within $1 of put wall 525
     eng = make_engine(p); eng._tick()
     assert st(eng).state is PositionState.OPEN
-    assert st(eng).position.strike == 532.0  # strike == mid
-    assert ("BUY", "QQQ_C532", 1) in p.orders
+    assert st(eng).position.strike == 525.0  # ATM: strike closest to spot (525.4)
+    assert ("BUY", "QQQ_C525", 1) in p.orders
 
 
-def test_no_entry_without_bull_control():
-    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
-    p.puts_below = 100; p.calls_above = 900_000  # flow not confirming
+def test_take_profit_all_at_50pct():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4   # enter, ATM strike 525
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    p.price = 527.0                                                   # premium 1.3 -> ~3.0 (>+50%)
+    eng._tick()
+    assert st(eng).position is None, "whole position exits at +50%"
+    assert "take profit" in st(eng).last_event.lower()
+    assert any(o[0] == "SELL" for o in p.orders)
+
+
+def test_entry_at_putwall_when_cautious_long():
+    p = ScriptProvider(); p.status = MMStatus.CAUTIOUS_LONG; p.price = 525.2
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN  # cautious-long also approves
+
+
+def test_no_entry_when_price_above_putwall_band():
+    # The exact bug: live price well above the put wall must NOT enter.
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 528.0  # >$1 from 525
     eng = make_engine(p); eng._tick()
     assert st(eng).state is PositionState.ARMED
     assert st(eng).position is None
 
 
-def test_exit_at_mid_on_downgrade():
-    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.2
-    eng = make_engine(p); eng._tick()
+def test_enters_on_tight_channel_when_ordered():
+    # Tight but properly-ordered channel (mid just above put wall) should still
+    # enter on cautious-long and NOT instantly exit (no downgrade yet).
+    p = ScriptProvider(); p.status = MMStatus.CAUTIOUS_LONG; p.price = 745.2
+    p.levels.lower = 745.0; p.levels.mid = 745.34; p.levels.top = 750.0
+    eng = make_engine(p); eng._tick(); eng._tick()
     assert st(eng).state is PositionState.OPEN
-    # Price climbs to mid and status downgrades -> exit at mid
-    p.price = 531.8; p.status = MMStatus.CAUTIOUS_LONG
-    eng._tick()
-    assert st(eng).position is None
-    assert any(o[0] == "SELL" for o in p.orders)
+    assert st(eng).position is not None
 
 
-def test_hold_to_top_while_long():
+def test_no_entry_on_inverted_channel():
     p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    p.levels.top = 520.0  # top below mid -> inverted, untradeable
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.DISABLED
+    assert st(eng).position is None
+
+
+def test_no_reentry_churn_same_touch():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.4
     eng = make_engine(p); eng._tick()
     assert st(eng).state is PositionState.OPEN
-    # At mid but STILL long -> must NOT exit
-    p.price = 532.0
-    eng._tick()
-    assert st(eng).state is PositionState.OPEN, "should hold through mid while LONG"
-    # Reaches top while long -> exit at top
-    p.price = 539.6
+    # Force a flat state without leaving the put-wall band, then re-tick.
+    eng._exit(st(eng), "test flatten", "TEST")
+    n = len([o for o in p.orders if o[0] == "BUY"])
+    p.price = 525.5  # still within the band, never left
+    eng._tick(); eng._tick()
+    assert len([o for o in p.orders if o[0] == "BUY"]) == n, "must not re-enter same touch"
+    # Price leaves the band and re-touches -> one new entry allowed.
+    p.price = 530.0; eng._tick()   # leaves band -> re-arm
+    p.price = 525.3; eng._tick()   # re-touch -> entry
+    assert len([o for o in p.orders if o[0] == "BUY"]) == n + 1
+
+
+def test_stop_when_close_below_lower():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0  # near lower
+    eng = make_engine(p); eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    # 1-min close drops below the lower level (525) while still long -> STOP
+    p.price = 524.0
     eng._tick()
     assert st(eng).position is None
     assert any(o[0] == "SELL" for o in p.orders)
+    assert "STOP" in st(eng).last_event
+
+
+def test_strike_picks_closest_available_not_nearest_dollar():
+    p = ScriptProvider()
+    # A real strike ladder including a fractional strike closer to the target.
+    p.get_0dte_calls = lambda t, near_strike, width=5.0: [
+        OptionContract("A", 746.0, "0dte", 1.0, 1.1, 1.05),
+        OptionContract("B", 746.5, "0dte", 1.0, 1.1, 1.05),
+        OptionContract("C", 747.0, "0dte", 1.0, 1.1, 1.05),
+    ]
+    eng = make_engine(p)
+    c = eng._pick_call("QQQ", 746.66)   # target mid+offset
+    assert c.strike == 746.5, "must pick the closest listed strike, not the nearest dollar"
 
 
 def test_protective_exit_on_bearish():
@@ -127,6 +187,43 @@ def test_protective_exit_on_bearish():
     eng._tick()
     assert st(eng).position is None
     assert st(eng).state is PositionState.DISABLED
+
+
+def test_stop_cooldown_blocks_immediate_reentry():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0  # near lower -> enter
+    eng = make_engine(p)
+    settings.stop_cooldown_seconds = 300
+    eng._tick()
+    assert st(eng).state is PositionState.OPEN
+    p.price = 524.0; eng._tick()                       # break below wall -> STOP
+    assert st(eng).position is None and "STOP" in st(eng).last_event
+    p.price = 527.0; eng._tick()                       # leaves the band -> re-arm
+    p.price = 525.0; eng._tick()                       # re-touch the wall
+    assert st(eng).position is None, "cooldown must block immediate re-entry"
+    assert "cooldown" in st(eng).last_event.lower()
+
+
+def test_reentry_allowed_without_cooldown():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    eng = make_engine(p)
+    settings.stop_cooldown_seconds = 0                 # cooldown off
+    eng._tick()
+    p.price = 524.0; eng._tick()                       # STOP
+    assert st(eng).position is None
+    p.price = 527.0; eng._tick()                       # re-arm
+    p.price = 525.0; eng._tick()                       # re-touch
+    assert st(eng).position is not None, "without cooldown, re-entry is allowed"
+
+
+def test_wide_rearm_distance_prevents_rearm():
+    p = ScriptProvider(); p.status = MMStatus.LONG; p.price = 525.0
+    eng = make_engine(p)
+    settings.rearm_distance = 5.0                      # must exceed 530 to re-arm
+    eng._tick()
+    p.price = 524.0; eng._tick()                       # STOP
+    p.price = 527.0; eng._tick()                       # within band -> NOT re-armed
+    p.price = 525.0; eng._tick()                       # re-touch wall
+    assert st(eng).position is None, "wide re-arm band should suppress the re-touch"
 
 
 if __name__ == "__main__":

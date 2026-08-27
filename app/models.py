@@ -129,6 +129,36 @@ class Position:
     entry_underlying: float
     current_price: float = 0.0   # current per-contract premium
     last_underlying: float = 0.0
+    breakeven_armed: bool = False  # set once +100% profit is reached
+    # Entry context (for review/analytics).
+    entry_lower: Optional[float] = None
+    entry_mid: Optional[float] = None
+    entry_top: Optional[float] = None
+    entry_stance: Optional[str] = None
+    entry_bull_control: Optional[bool] = None
+    # Excursions since entry (premium, per contract).
+    max_premium: float = 0.0
+    min_premium: float = 0.0
+    max_underlying: float = 0.0
+    min_underlying: float = 0.0
+
+    def update_excursions(self) -> None:
+        self.max_premium = max(self.max_premium, self.current_price)
+        self.min_premium = min(self.min_premium, self.current_price) if self.min_premium else self.current_price
+        if self.last_underlying:
+            self.max_underlying = max(self.max_underlying, self.last_underlying)
+            self.min_underlying = (min(self.min_underlying, self.last_underlying)
+                                   if self.min_underlying else self.last_underlying)
+
+    @property
+    def mfe(self) -> float:
+        """Max favorable excursion in dollars (best unrealised P&L seen)."""
+        return round((self.max_premium - self.entry_price) * 100 * self.qty, 2)
+
+    @property
+    def mae(self) -> float:
+        """Max adverse excursion in dollars (worst unrealised P&L seen)."""
+        return round((self.min_premium - self.entry_price) * 100 * self.qty, 2)
 
     @property
     def pnl(self) -> float:
@@ -139,6 +169,76 @@ class Position:
         if not self.entry_price:
             return 0.0
         return round((self.current_price - self.entry_price) / self.entry_price * 100, 2)
+
+
+@dataclass
+class PivotLevels:
+    """Person's pivots from the prior period's OHLC (default timeframe = weekly)."""
+
+    ticker: str
+    pp: float
+    r1: float
+    r2: float
+    r3: float
+    s1: float
+    s2: float
+    s3: float
+    prior_high: Optional[float] = None
+    prior_low: Optional[float] = None
+    prior_close: Optional[float] = None
+    spot: Optional[float] = None
+    asof: float = field(default_factory=time.time)
+
+    @staticmethod
+    def from_ohlc(ticker: str, high: float, low: float, close: float,
+                  spot: Optional[float] = None) -> "PivotLevels":
+        pp = (high + low + close) / 3.0
+        r1 = 2 * pp - low
+        r2 = pp + high - low
+        r3 = r2 + high - low
+        s1 = 2 * pp - high
+        s2 = pp - high + low
+        s3 = s2 - high + low
+        return PivotLevels(ticker=ticker, pp=round(pp, 2), r1=round(r1, 2), r2=round(r2, 2),
+                           r3=round(r3, 2), s1=round(s1, 2), s2=round(s2, 2), s3=round(s3, 2),
+                           prior_high=high, prior_low=low, prior_close=close, spot=spot)
+
+
+@dataclass
+class PivotPosition:
+    """A zone-fade trade: 4 ATM contracts, scale most at +50% profit, run a
+    runner to the next zone (down for shorts, up for longs)."""
+
+    ticker: str
+    direction: str               # LONG / SHORT
+    option_type: str             # CALL / PUT
+    contract_symbol: str
+    strike: float
+    expiry: str
+    qty: int                     # initial lot
+    remaining_qty: int
+    entry_price: float           # premium paid
+    entry_time: float
+    entry_underlying: float
+    pp: float                    # the zone level we faded (entry zone)
+    target: Optional[float] = None   # runner exit level (next zone), None if none
+    entry_zone_label: str = ""       # e.g. "R1"
+    target_label: str = ""           # e.g. "PP"
+    break_stop: Optional[float] = None  # exit price if the fade breaks the zone
+    current_price: float = 0.0
+    last_underlying: float = 0.0
+    scaled: bool = False         # the 3 lots taken at +50%
+    breakeven: bool = False      # stop moved to breakeven
+    stop_premium: float = 0.0    # premium stop level (<0 = disabled)
+    realized_pnl: float = 0.0    # locked in from the scale-out
+
+    @property
+    def open_pnl(self) -> float:
+        return round((self.current_price - self.entry_price) * 100 * self.remaining_qty, 2)
+
+    @property
+    def total_pnl(self) -> float:
+        return round(self.realized_pnl + self.open_pnl, 2)
 
 
 @dataclass
@@ -154,6 +254,28 @@ class TradeRecord:
     price: float                 # premium
     pnl: Optional[float] = None
     dry_run: bool = True
+    # Context / analytics (EXIT records carry the full round-trip).
+    stance: Optional[str] = None         # MM stance at this event
+    bull_control: Optional[bool] = None
+    lower: Optional[float] = None
+    mid: Optional[float] = None
+    top: Optional[float] = None
+    exit_type: Optional[str] = None      # TOP / MID / STOP / PROTECTIVE / KILL
+    entry_price: Optional[float] = None
+    entry_underlying: Optional[float] = None
+    entry_stance: Optional[str] = None
+    hold_seconds: Optional[float] = None
+    mae: Optional[float] = None          # max adverse excursion ($)
+    mfe: Optional[float] = None          # max favorable excursion ($)
+
+
+# Stable column order for CSV export.
+TRADE_CSV_FIELDS = [
+    "ts", "datetime", "ticker", "action", "exit_type", "reason",
+    "underlying", "contract_symbol", "strike", "qty", "price", "pnl",
+    "stance", "entry_stance", "bull_control", "lower", "mid", "top",
+    "entry_price", "entry_underlying", "hold_seconds", "mae", "mfe", "dry_run",
+]
 
 
 def to_jsonable(obj):

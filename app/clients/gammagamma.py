@@ -10,10 +10,14 @@ Verified contract (https://gammagamma-production.up.railway.app):
       "major_put_walls":[755.0,757.0,756.0]
     }
 
-Level derivation (per the strategy spec):
-    lower = lowest put wall on the weekly   -> min(major_put_walls)  (fallback put_wall)
-    top   = largest call strike on the weekly-> max(major_call_walls) (fallback call_wall)
-    mid   = gvwap (preferred) else gamma_flip
+Level derivation: read the GEX-dominant call_wall / put_wall for EACH
+configured expiry (default weekly + 0dte), then take the outer bounds:
+    lower = LOWEST put wall across the expiries
+    top   = HIGHEST call wall across the expiries
+    mid   = GVWAP (weekly preferred) else gamma_flip
+
+The scalar put_wall/call_wall fields are the highest-|GEX| walls per expiry
+(arrays are GEX-ranked, largest first).
 
 Weekly data can be empty intraday/after-hours; we then fall back to the
 default (all-expiry) snapshot so the system still has levels to work with.
@@ -63,7 +67,11 @@ class GammaGammaProvider:
         if "divine-celebration" in base:
             base = DEFAULT_BACKEND
         self.base = base
-        self.expiry = expiry or settings.gamma_expiry
+        # One or more expiries (comma-separated), e.g. "weekly,0dte". The
+        # channel bounds are taken across ALL of them: highest call wall and
+        # lowest put wall.
+        raw = expiry or settings.gamma_expiry
+        self.expiries = [e.strip() for e in raw.split(",") if e.strip()] or ["weekly"]
         headers = {}
         if api_key or settings.gamma_api_key:
             headers["Authorization"] = f"Bearer {api_key or settings.gamma_api_key}"
@@ -81,45 +89,73 @@ class GammaGammaProvider:
             log.debug("gamma fetch %s failed: %s", symbol, exc)
         return None
 
+    def _dominant_walls(self, d: dict):
+        """(call_wall, put_wall) for one expiry — the GEX-dominant scalar walls,
+        falling back to the GEX-ranked array heads."""
+        cw = _num(d.get("call_wall"))
+        if cw is None:
+            mc = _strikes(d.get("major_call_walls"))
+            cw = mc[0] if mc else None
+        pw = _num(d.get("put_wall"))
+        if pw is None:
+            mp = _strikes(d.get("major_put_walls"))
+            pw = mp[0] if mp else None
+        return cw, pw
+
     def get_levels(self, ticker: str) -> Optional[Levels]:
-        data = self._get(ticker, self.expiry)
-        # Weekly snapshot can be empty after-hours -> fall back to all-expiry.
-        if not data and self.expiry != "all":
-            data = self._get(ticker, "all")
-        if not data:
+        # Pull every configured expiry (e.g. weekly + 0dte).
+        datas = [(e, self._get(ticker, e)) for e in self.expiries]
+        datas = [(e, d) for e, d in datas if d]
+        if not datas:
+            allx = self._get(ticker, "all")  # after-hours fallback
+            if allx:
+                datas = [("all", allx)]
+        if not datas:
             log.warning("Gammagamma: no levels for %s", ticker)
             return None
 
-        gvwap = _num(data.get("gvwap"))
-        gamma_flip = _num(data.get("gamma_flip"))
-        spot = _num(data.get("spot"))
+        call_walls, put_walls = [], []
+        gvwap = gamma_flip = spot = None
+        weekly_gvwap = weekly_flip = None
+        used = []
+        for e, d in datas:
+            used.append(str(d.get("expiry_filter", e)))
+            cw, pw = self._dominant_walls(d)
+            if cw is not None:
+                call_walls.append(cw)
+            if pw is not None:
+                put_walls.append(pw)
+            g, f, s = _num(d.get("gvwap")), _num(d.get("gamma_flip")), _num(d.get("spot"))
+            if s is not None:
+                spot = s
+            if e == "weekly" or d.get("expiry_filter") == "weekly":
+                weekly_gvwap, weekly_flip = g, f
+            if g is not None and gvwap is None:
+                gvwap = g
+            if f is not None and gamma_flip is None:
+                gamma_flip = f
 
-        call_walls = _strikes(data.get("major_call_walls"))
-        put_walls = _strikes(data.get("major_put_walls"))
-        cw = _num(data.get("call_wall"))
-        pw = _num(data.get("put_wall"))
-        if cw is not None:
-            call_walls.append(cw)
-        if pw is not None:
-            put_walls.append(pw)
+        # Outer bounds across the expiries: highest call wall, lowest put wall.
+        top_call = max(call_walls) if call_walls else None
+        bot_put = min(put_walls) if put_walls else None
+        # Mid magnet prefers the weekly GVWAP, else any GVWAP, else gamma flip.
+        mid = (weekly_gvwap if weekly_gvwap is not None
+               else gvwap if gvwap is not None
+               else weekly_flip if weekly_flip is not None else gamma_flip)
 
-        highest_call = max(call_walls) if call_walls else cw
-        lowest_put = min(put_walls) if put_walls else pw
-        mid = gvwap if gvwap is not None else gamma_flip
-
-        if lowest_put is None or highest_call is None or mid is None:
+        if bot_put is None or top_call is None or mid is None:
             log.warning("Gammagamma %s: incomplete levels", ticker)
             return None
 
         return Levels(
             ticker=ticker,
-            lower=lowest_put,
+            lower=bot_put,
             mid=mid,
-            top=highest_call,
+            top=top_call,
             gvwap=gvwap,
             gamma_flip=gamma_flip,
-            lowest_put=lowest_put,
-            highest_call=highest_call,
+            lowest_put=bot_put,      # lowest put wall across expiries
+            highest_call=top_call,   # highest call wall across expiries
             spot=spot,
-            expiry=str(data.get("expiry_filter", self.expiry)),
+            expiry="+".join(used),
         )
